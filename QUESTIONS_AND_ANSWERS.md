@@ -81,6 +81,28 @@ Both fixes re-verified against a real MCP client/server run before pushing anywh
 
 ---
 
+### Tests: live network calls, deliberately, and what that actually cost (2026-07-13)
+**Decision:** the test suite (`tests/`) makes real calls to PubMed's E-utilities on
+every run — no recorded fixtures, no mocking. This was a deliberate choice, not an
+oversight: the project's own rule is nothing gets claimed as working unless it's
+running on real data, and that was extended to the automated suite, not just manual
+verification. `tests/test_server.py` also includes one live end-to-end test — real
+MCP stdio client/server connection, real PubMed call, real SQLite file — proving the
+modules work wired together, not just in isolation.
+**What it actually cost, found on the first real run:** running the full suite fired
+roughly 7 real network calls within a couple seconds and tripped NCBI's real rate
+limit for unauthenticated callers (3 req/sec) — `HTTPError: 429 Too Many Requests` on
+`test_search_and_fetch_end_to_end`. Not a code bug — a direct, measured consequence
+of the live-testing decision. Fixed with an autouse `time.sleep(0.4)` fixture in
+`test_pubmed_client.py`, not a retry/backoff system — pacing, not resilience
+infrastructure, since the problem is self-inflicted rate, not real-world failure.
+**Why this is worth having ready for an interview:** "why don't your tests mock the
+external API" has a real, defensible answer now — the tradeoff was made
+deliberately, and the actual cost (rate limiting) was measured and paid, not assumed
+away.
+
+---
+
 ## B. Open — decisions you have NOT made yet (don't claim these in an interview)
 
 These are real gaps. Saying "TBD" honestly beats guessing — that's the standing
