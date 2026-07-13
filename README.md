@@ -6,6 +6,23 @@ A Python MCP server that sits between AI agents and biological databases. Every 
 
 ---
 
+## Status (as of 2026-07-13)
+
+**v1 shipped and verified for real, not estimated.** The `search_pubmed` MCP tool is
+live, tested against real PubMed data (11 passing tests, no fixtures/mocks — the
+suite hits the real API on every run), security-reviewed, and running.
+
+The full cross-project chain has also been proven for real: [Aletheia](https://github.com/srikarjy/Aletheia)
+called `search_pubmed` over a live MCP connection, got back a real `retrieval_id`,
+and stored it alongside `source_paper_id` in its own `provenance` table — the exact
+link this project exists to create. One caveat, stated precisely rather than
+rounded up: that call came from a retrieval script (Aletheia's Phase 1), not yet
+from an actual reasoning agent — Aletheia's advocate agent (Phase 2) doesn't exist
+yet. The mechanical chain is real; the "agent" half of the pitch below is still
+ahead.
+
+---
+
 ## The Problem
 
 A drug discovery team uses an AI agent to research gene targets. The agent queries PubMed 200 times over three days and surfaces a paper claiming gene X is upregulated in pancreatic cancer. A scientist makes a decision based on that. Six months later, during FDA submission:
@@ -77,17 +94,27 @@ Same reason as Aletheia: these frameworks hide the exact artifact at each step i
 
 ## Retrieval Log Schema
 
-> **Status: In design.** The starter schema is below. The open question is what additional columns are needed to fully satisfy a regulatory audit — specifically around paper status at retrieval time.
+> **Shipped**, resolved against real PubMed `esearch`/`efetch` responses, not
+> guessed — see the commit history for the reasoning.
 
 ```
-retrieval_id    → UUID, primary key
+retrieval_id    → UUID, primary key (one row per paper, not per query)
 query_text      → the exact search string sent to PubMed
 pmid            → PubMed paper ID returned
 retrieved_at    → UTC timestamp of retrieval
 agent_id        → which agent made the call (e.g. "aletheia:advocate")
+medline_status  → verbatim MedlineCitation/@Status (e.g. "MEDLINE", "Publisher")
+pub_status      → verbatim PubmedData/PublicationStatus — this is the field that
+                   answers "was it a preprint at retrieval time" (e.g. "aheadofprint")
+raw_response    → full PubMed response snapshot, verbatim, uninterpreted
 ```
 
-Pending columns: paper publication status at retrieval time, abstract snapshot, evidence level classification.
+No `evidence_level` column — real PubMed records carry multiple simultaneous
+`PublicationType` tags (a single RCT record had 5), so a scalar column would be
+lossy, and evidence ranking is explicitly Aletheia's job, not Biolab's (see
+Commandments below). `abstract_snapshot` isn't a separate column either — it's
+parsed from `raw_response` at read time instead of duplicated, so there's one
+source of truth instead of two copies that could drift.
 
 ---
 
@@ -98,7 +125,7 @@ Pending columns: paper publication status at retrieval time, abstract snapshot, 
 | Language | Python | Official MCP SDK, zero boundary with Aletheia, biotech reads Python |
 | Protocol | MCP | Aletheia agents call tools, not endpoints |
 | External API | PubMed E-utilities | Real, citable, stable biological literature source |
-| Storage | TBD (SQLite → PostgreSQL) | Start simple, migrate when query patterns are known |
+| Storage | SQLite | Migrate to Postgres only if a real query pattern (e.g. concurrent writers) proves SQLite insufficient — not yet the case |
 
 ---
 
