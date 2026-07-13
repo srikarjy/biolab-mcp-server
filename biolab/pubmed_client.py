@@ -3,8 +3,11 @@
 from dataclasses import dataclass
 from urllib.parse import urlencode
 from urllib.request import urlopen
-from xml.etree import ElementTree as ET
+from xml.etree import ElementTree as ET  # only for tostring() — safe, no untrusted parsing
 import json
+
+import defusedxml.ElementTree as SafeET  # parses untrusted network XML; guards against
+                                          # entity-expansion ("billion laughs") attacks
 
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -45,7 +48,7 @@ def fetch(pmids: list[str]) -> list[PubMedPaper]:
         "retmode": "xml",
     })
     with urlopen(f"{EFETCH_URL}?{params}", timeout=TIMEOUT_SECONDS) as resp:
-        root = ET.fromstring(resp.read())
+        root = SafeET.fromstring(resp.read())
     return [_parse_article(article) for article in root.findall("PubmedArticle")]
 
 

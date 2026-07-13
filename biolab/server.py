@@ -9,6 +9,9 @@ from mcp.server.fastmcp import FastMCP
 from biolab import db, pubmed_client, retrieval_log
 
 DB_PATH = os.environ.get("BIOLAB_DB_PATH", "biolab.db")
+MAX_RESULTS_CAP = 50  # hard ceiling — an uncapped max_results lets a caller force
+                        # unbounded memory use and DB writes per call; 50 matches
+                        # PubMed's own esearch API default retmax
 
 mcp = FastMCP("biolab")
 _conn = db.connect(DB_PATH)
@@ -27,6 +30,8 @@ def search_pubmed(query: str, agent_id: str, max_results: int = 5) -> dict:
         raise ValueError("query must not be empty")
     if not agent_id.strip():
         raise ValueError("agent_id must not be empty")
+    if not 1 <= max_results <= MAX_RESULTS_CAP:
+        raise ValueError(f"max_results must be between 1 and {MAX_RESULTS_CAP}")
 
     papers = pubmed_client.search_and_fetch(query, max_results)
     if not papers:

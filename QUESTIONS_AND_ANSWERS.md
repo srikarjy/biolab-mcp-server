@@ -63,6 +63,24 @@ validate the parser," this is a concrete, truthful answer.
 
 ---
 
+### Security review before making the repo public (2026-07-13)
+Manual review (the `/security-review` skill's own git-diff step assumes an `origin`
+remote, which didn't exist yet — reviewed the full diff since init by hand instead).
+No secrets, no SQL injection (parameterized queries throughout), no eval/exec/subprocess.
+Two real findings, both fixed:
+1. **XML entity-expansion DoS**: `pubmed_client.py` parsed network-fetched XML with
+   stdlib `ElementTree.fromstring`, vulnerable to "billion laughs" attacks. Likelihood
+   was low (fixed HTTPS endpoint, not attacker-controlled), but fixed anyway —
+   `defusedxml.ElementTree.fromstring` now does the parsing; stdlib `ET.tostring` is
+   still used for serialization only, which doesn't process untrusted input.
+2. **Unbounded `max_results`**: no upper limit meant a caller could force arbitrarily
+   large memory use and DB writes per call. Added `MAX_RESULTS_CAP = 50` in
+   `server.py` (matches PubMed's own esearch API default), tool now raises `ValueError`
+   outside `[1, 50]`.
+Both fixes re-verified against a real MCP client/server run before pushing anywhere.
+
+---
+
 ## B. Open — decisions you have NOT made yet (don't claim these in an interview)
 
 These are real gaps. Saying "TBD" honestly beats guessing — that's the standing
