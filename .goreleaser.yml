@@ -1,0 +1,128 @@
+# .goreleaser.yml
+project_name: biolab
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: biolab
+    main: ./cmd/cli/main.go
+    binary: biolab
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    hooks:
+      post:
+        - ./scripts/sign.sh {{.Path}}
+
+  - id: biolab-server
+    main: ./cmd/server/main.go
+    binary: biolab-server
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - format: tar.gz
+    name_template: "{{.ProjectName}}_{{.Version}}_{{.Os}}_{{.Arch}}"
+    files:
+      - LICENSE
+      - README.md
+    builds:
+      - biolab
+      - biolab-server
+
+checksum:
+  name_template: "{{.ProjectName}}_{{.Version}}_checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{.Tag}}-dev"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^style:"
+
+release:
+  github:
+    owner: srikarjy
+    name: biolab-mcp
+  draft: false
+  prerelease: auto
+
+dockers:
+  - image_templates:
+      - "ghcr.io/srikarjy/biolab-mcp:{{.Version}}"
+      - "ghcr.io/srikarjy/biolab-mcp:latest"
+    dockerfile: Dockerfile
+    goos: linux
+    goarch: amd64
+    builds:
+      - biolab
+      - biolab-server
+
+nfpms:
+  - file_name_template: "{{.ProjectName}}_{{.Version}}_{{.Os}}_{{.Arch}}"
+    package_name: biolab
+    maintainer: Srikar Jy <srikarjy@gmail.com>
+    description: Biolab MCP Server - Auditable biological database queries
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+    binds:
+      - /usr/local/bin/biolab
+    builds:
+      - biolab
+      - biolab-server
+
+brews:
+  - name: biolab
+    tap:
+      owner: srikarjy
+      name: homebrew-tap
+    folder: Formula
+    homepage: https://github.com/srikarjy/biolab-mcp
+    license: MIT
+    description: "MCP server for auditable biological database queries"
+    install: |
+      bin.install "biolab"
+      bin.install "biolab-server"
+
+scoop:
+  - bucket:
+      owner: srikarjy
+      name: scoop-bucket
+    name: biolab
+    description: "MCP server for auditable biological database queries"
+    license: MIT
+    homepage: https://github.com/srikarjy/biolab-mcp

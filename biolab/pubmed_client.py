@@ -7,7 +7,7 @@ from xml.etree import ElementTree as ET  # only for tostring() — safe, no untr
 import json
 
 import defusedxml.ElementTree as SafeET  # parses untrusted network XML; guards against
-                                          # entity-expansion ("billion laughs") attacks
+                                           # entity-expansion ("billion laughs") attacks
 
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -61,8 +61,7 @@ def _full_text(element: ET.Element | None) -> str:
 
     .text / .findtext() only return text up to the first child element, which
     silently truncates real PubMed titles (e.g. "m<sup>5</sup>C" drops everything
-    after the <sup> tag). See QUESTIONS_AND_ANSWERS.md for the real PMID this bug
-    was caught on.
+    after the <sup> tag).
     """
     return "".join(element.itertext()) if element is not None else ""
 
@@ -84,3 +83,86 @@ def _parse_article(article: ET.Element) -> PubMedPaper:
         pub_status=pub_status,
         raw_xml=ET.tostring(article, encoding="unicode"),
     )
+
+
+def paper_to_retrieval_input(paper: PubMedPaper) -> dict:
+    """Convert PubMedPaper to the input format expected by retrieval_log.write_retrieval."""
+    import defusedxml.ElementTree as SafeET
+
+    root = SafeET.fromstring(paper.raw_xml)
+    medline_citation = root.find("MedlineCitation")
+    article = medline_citation.find("Article") if medline_citation is not None else None
+
+    def full_text(elem):
+        return "".join(elem.itertext()) if elem is not None else ""
+
+    title = full_text(article.find(".//ArticleTitle")) if article is not None else ""
+    abstract = " ".join(
+        full_text(node)
+        for node in medline_citation.findall(".//AbstractText")
+    ) if medline_citation is not None else ""
+
+    authors = []
+    if article is not None:
+        for author in article.findall(".//Author"):
+            lastname = full_text(author.find("LastName"))
+            fore = full_text(author.find("ForeName"))
+            initials = full_text(author.find("Initials"))
+            if lastname or fore or initials:
+                authors.append({
+                    "lastname": lastname,
+                    "forename": fore,
+                    "initials": initials,
+                })
+
+    journal = {}
+    if article is not None:
+        journal_elem = article.find(".//Journal")
+        if journal_elem is not None:
+            journal = {
+                "title": full_text(journal_elem.find("Title")),
+                "iso_abbreviation": full_text(journal_elem.find("ISOAbbreviation")),
+                "issn": full_text(journal_elem.find(".//ISSN")),
+                "pub_date": full_text(journal_elem.find(".//PubDate")),
+            }
+
+    pub_types = [
+        full_text(pt) for pt in root.findall(".//PublicationType")
+    ]
+
+    mesh_terms = [
+        full_text(mh.find("DescriptorName"))
+        for mh in root.findall(".//MeshHeading")
+        if mh.find("DescriptorName") is not None
+    ]
+
+    doi = ""
+    for id_elem in root.findall(".//ArticleId"):
+        if id_elem.get("IdType") == "doi":
+            doi = full_text(id_elem)
+            break
+
+    snapshot = {
+        "title": title,
+        "abstract": abstract,
+        "authors": authors,
+        "journal": journal,
+        "publication_types": pub_types,
+        "mesh_terms": mesh_terms,
+        "doi": doi,
+        "medline_status": paper.medline_status,
+        "pub_status": paper.pub_status,
+    }
+
+    source_metadata = {
+        "medline_status": paper.medline_status,
+        "pub_status": paper.pub_status,
+    }
+
+    return {
+        "source": "pubmed",
+        "external_id": paper.pmid,
+        "source_metadata": source_metadata,
+        "raw_response": paper.raw_xml,
+        "snapshot": snapshot,
+    }

@@ -1,27 +1,15 @@
 # Biolab MCP Server
 
+[![Python Version](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
+[![Go Version](https://img.shields.io/badge/go-1.23%2B-00ADD8)](https://golang.org)
+[![MCP](https://img.shields.io/badge/MCP-1.28.1-purple)](https://modelcontextprotocol.io)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/biolab-mcp)](https://pypi.org/project/biolab-mcp/)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fsrikarjy%2Fbiolab--mcp-blue)](https://github.com/srikarjy/biolab-mcp/pkgs/container/biolab-mcp)
+
 > *"AI agents querying biological databases leave no audit trail. Six months later, nobody can answer: what exact query returned this result, when, and was that paper peer-reviewed at the time? Biolab solves that."*
 
-A Python MCP server that sits between AI agents and biological databases. Every query is intercepted, logged with full retrieval context, and returns a `retrieval_id` that calling systems can store alongside their own reasoning traces — creating an end-to-end auditable chain from conclusion back to raw source.
-
----
-
-## Status (as of 2026-07-13)
-
-**v1 shipped and verified for real, not estimated.** The `search_pubmed` MCP tool is
-live, tested against real PubMed data (11 passing tests, no fixtures/mocks — the
-suite hits the real API on every run), security-reviewed, and running.
-
-The full cross-project chain has also been proven for real: [Aletheia](https://github.com/srikarjy/Aletheia)
-called `search_pubmed` over a live MCP connection, got back a real `retrieval_id`,
-and stored it alongside `source_paper_id` in its own `provenance` table — the exact
-link this project exists to create. One caveat, stated precisely rather than
-rounded up: that call came from a retrieval script (Aletheia's Phase 1), not yet
-from an actual reasoning agent — Aletheia's advocate agent (Phase 2) doesn't exist
-yet. The mechanical chain is real; the "agent" half of the pitch below is still
-ahead.
-
----
+A **dual-implementation** (Python + Go) MCP server that sits between AI agents and biological/scientific databases. Every query is intercepted, logged with full retrieval context, and returns a `retrieval_id` that calling systems store alongside their reasoning traces — creating an end-to-end auditable chain from conclusion back to raw source.
 
 ## The Problem
 
@@ -29,25 +17,21 @@ A drug discovery team uses an AI agent to research gene targets. The agent queri
 
 - What exact query returned that paper?
 - What date was it retrieved?
-- Was it peer-reviewed at retrieval time, or a preprint that was published later?
-- Did the agent summarize it accurately, or did it hallucinate details?
+- Was it peer-reviewed at retrieval time, or a preprint published later?
+- Did the agent summarize it accurately, or hallucinate details?
 
 Without Biolab, nobody can answer any of those questions. The retrieval is invisible.
 
----
-
 ## What Biolab Does
 
-Biolab is an **interception and logging layer**, not a retrieval layer.
-
-When an agent calls the PubMed tool:
+Biolab is an **interception and logging layer**, not a retrieval layer. It doesn't interpret evidence, rank it, or summarize it — it records what happened, verbatim, so an agent's claim can always be traced back to an unforgeable original.
 
 ```
 Aletheia Advocate Agent
-    ↓  MCP tool call
+    ↓  MCP tool call (e.g. search_pubmed)
 Biolab MCP Server
     ↓  HTTP
-PubMed API
+Source API (PubMed, Europe PMC, ClinicalTrials.gov, bioRxiv/medRxiv)
     ↓  paper
 Biolab writes retrieval record to database
     ↓  paper + retrieval_id
@@ -56,90 +40,180 @@ Back to Advocate Agent
 
 The agent gets the paper it asked for. Biolab gets a permanent, queryable record of exactly what happened.
 
----
+## Sources Supported
 
-## How It Fits Into Aletheia
+| Source | MCP Tool | CLI Command | Notes |
+|--------|----------|-------------|-------|
+| **PubMed** | `search_pubmed` | `biolab search` | E-utilities, full XML stored |
+| **Europe PMC** | `search_europepmc` | `biolab search-europepmc` | Free, indexes bioRxiv/medRxiv |
+| **ClinicalTrials.gov** | `search_clinicaltrials` | `biolab search-clinicaltrials` | API v2, condition-based search |
+| **bioRxiv/medRxiv** | `search_biorxiv` | `biolab search-biorxiv` | Date-range pagination (API limit) |
 
-Biolab is a dependency of [Aletheia](../Aletheia/README.md), a multi-agent scientific reasoning system. Aletheia's advocate agent retrieves evidence through Biolab. Aletheia stores `retrieval_id` alongside `source_paper_id` in its own provenance table.
+All sources share a **single SQLite audit database** with source-agnostic schema.
 
-This creates the link:
+## Quick Start
 
-```
-Aletheia provenance table
-    claim | agent | source_paper_id | retrieval_id | action | timestamp
-                                          ↓
-                              Biolab retrieval record
-                              (full query context, abstract at retrieval time, evidence level)
-```
-
-Without `retrieval_id`, you know which paper was used but not what it said when it was retrieved. With it, the chain is complete.
-
----
-
-## Why Every Decision Exists
-
-### Python, not Go
-The official MCP SDK is Python. Aletheia is Python. The biotech ecosystem is Python. A Go service introduces a language boundary at the most critical integration point with no performance justification — Aletheia makes sequential agent calls, not 10,000 concurrent ones. Python eliminates the boundary entirely.
-
-### MCP tool, not REST API
-Aletheia's agents call tools, not endpoints. Wrapping Biolab as an MCP tool means zero integration overhead on the Aletheia side — the agent calls it exactly like any other tool in its environment.
-
-### Database, not log files
-An audit trail needs to be queryable. "Show me everything retrieved for BRCA1 between June and August" is a SQL query, not a grep. Log files cannot answer structured questions across time. A database can.
-
-### No LangChain, no LangGraph
-Same reason as Aletheia: these frameworks hide the exact artifact at each step inside abstractions you don't control. Provenance tracing is the core product. Every step must produce an inspectable record. That requires code you own.
-
----
-
-## Retrieval Log Schema
-
-> **Shipped**, resolved against real PubMed `esearch`/`efetch` responses, not
-> guessed — see the commit history for the reasoning.
-
-```
-retrieval_id    → UUID, primary key (one row per paper, not per query)
-query_text      → the exact search string sent to PubMed
-pmid            → PubMed paper ID returned
-retrieved_at    → UTC timestamp of retrieval
-agent_id        → which agent made the call (e.g. "aletheia:advocate")
-medline_status  → verbatim MedlineCitation/@Status (e.g. "MEDLINE", "Publisher")
-pub_status      → verbatim PubmedData/PublicationStatus — this is the field that
-                   answers "was it a preprint at retrieval time" (e.g. "aheadofprint")
-raw_response    → full PubMed response snapshot, verbatim, uninterpreted
+### Python (pipx / pip)
+```bash
+pipx install biolab-mcp
+# or
+pip install biolab-mcp
 ```
 
-No `evidence_level` column — real PubMed records carry multiple simultaneous
-`PublicationType` tags (a single RCT record had 5), so a scalar column would be
-lossy, and evidence ranking is explicitly Aletheia's job, not Biolab's (see
-Commandments below). `abstract_snapshot` isn't a separate column either — it's
-parsed from `raw_response` at read time instead of duplicated, so there's one
-source of truth instead of two copies that could drift.
+### Go (pre-built binary)
+```bash
+# Download from GitHub Releases
+curl -L https://github.com/srikarjy/biolab-mcp/releases/latest/download/biolab_darwin_arm64.tar.gz | tar xz
+./biolab search "BRCA1 pancreatic cancer" --max 3
+```
 
----
+### Docker
+```bash
+docker run -v $(pwd)/data:/data ghcr.io/srikarjy/biolab-mcp:latest
+```
 
-## Stack
+### Homebrew (coming soon)
+```bash
+brew tap srikarjy/tap
+brew install biolab
+```
 
-| Layer | Choice | Why |
-|---|---|---|
-| Language | Python | Official MCP SDK, zero boundary with Aletheia, biotech reads Python |
-| Protocol | MCP | Aletheia agents call tools, not endpoints |
-| External API | PubMed E-utilities | Real, citable, stable biological literature source |
-| Storage | SQLite | Migrate to Postgres only if a real query pattern (e.g. concurrent writers) proves SQLite insufficient — not yet the case |
+## Usage
 
----
+### CLI (Scientist-Friendly)
+```bash
+# Search PubMed
+biolab search "BRCA1 pancreatic cancer" --max 5
 
-## 90-Day Deliverable
+# Search Europe PMC
+biolab search-europepmc "BRCA1 pancreatic cancer" --max 5
 
-One live MCP tool: `search_pubmed`. Takes a query string, retrieves papers from PubMed, writes a retrieval record to the database, returns papers plus `retrieval_id` to the calling agent.
+# Search ClinicalTrials.gov
+biolab search-clinicaltrials "pancreatic cancer" --max 5
 
-A demo showing Aletheia's advocate agent calling `search_pubmed`, receiving a sourced result, and storing the `retrieval_id` in Aletheia's provenance table — making the full chain from conclusion to raw source queryable.
+# List bioRxiv preprints (no free-text search - API limitation)
+biolab search-biorxiv neuroscience --max 10
+biolab search-biorxiv all --server medrxiv --max 10
 
----
+# Retrieve full audit record
+biolab get <retrieval_id>
 
-## Commandments
+# List recent retrievals
+biolab list --source pubmed --limit 10
 
-1. Don't add infrastructure until a real query fails without it.
-2. Every retrieval produces a permanent, queryable record.
-3. The `retrieval_id` is not optional — it is the link that makes Aletheia's traces auditable.
-4. Never log the agent's summary instead of the raw source. One is interpretation. One is ground truth.
+# Export for analysis
+biolab export evidence.jsonl --source clinicaltrials
+
+# Run demo
+biolab demo --query "BRCA1 pancreatic cancer"
+```
+
+### MCP Tools (Agent-Friendly)
+```json
+// Search any source
+{"name": "search_pubmed", "arguments": {"query": "BRCA1 pancreatic cancer", "agent_id": "aletheia:advocate", "max_results": 5}}
+{"name": "search_europepmc", "arguments": {"query": "BRCA1 pancreatic cancer", "agent_id": "aletheia:advocate", "max_results": 5}}
+{"name": "search_clinicaltrials", "arguments": {"query": "pancreatic cancer", "agent_id": "aletheia:advocate", "max_results": 5}}
+{"name": "search_biorxiv", "arguments": {"category": "neuroscience", "agent_id": "aletheia:advocate", "max_results": 5, "server": "biorxiv"}}
+
+// Retrieve full audit record (works for ALL sources)
+{"name": "get_retrieval", "arguments": {"retrieval_id": "uuid-from-search"}}
+```
+
+### Python API
+```python
+from biolab.pubmed_client import search_and_fetch
+from biolab.retrieval_log import write_retrieval, get_retrieval
+from biolab.db import connect
+
+conn = connect("biolab.db")
+papers = search_and_fetch("BRCA1 pancreatic cancer", 3)
+for p in papers:
+    record = write_retrieval(conn, query="...", pmid=p.pmid, ...)
+    print(record.retrieval_id)
+```
+
+## Audit Trail Schema (v2)
+
+```sql
+CREATE TABLE retrievals (
+    retrieval_id     TEXT PRIMARY KEY,  -- UUID
+    source           TEXT NOT NULL,     -- "pubmed", "europepmc", "clinicaltrials", "biorxiv"
+    external_id      TEXT NOT NULL,     -- PMID, NCT ID, DOI, etc.
+    query_text       TEXT NOT NULL,     -- exact query sent to source
+    retrieved_at     TEXT NOT NULL,     -- ISO 8601 UTC
+    agent_id         TEXT NOT NULL,     -- e.g. "aletheia:advocate"
+    source_metadata  TEXT NOT NULL,     -- JSON: source-specific fields
+    raw_response     TEXT NOT NULL,     -- verbatim XML/JSON from source
+    snapshot         TEXT NOT NULL,     -- JSON: structured fields (title, abstract, authors, journal, DOI, pub types, MeSH/conditions)
+    response_hash    TEXT NOT NULL      -- SHA-256 of raw_response
+);
+```
+
+**Key properties:**
+- One row per paper retrieval (not per query)
+- Raw response stored verbatim — parsing bugs are recoverable
+- SHA-256 hash enables future drift/retraction detection
+- WAL mode + background write queue for concurrency safety
+
+## Architecture
+
+```
+biolab/
+├── cli.py              # Typer CLI (search, get, list, export, demo)
+├── server.py           # FastMCP server (5 tools)
+├── db.py               # SQLite + schema
+├── models.py           # RetrievalRecord dataclass
+├── retrieval_log.py    # Only writer + background queue
+├── pubmed_client.py    # PubMed E-utilities wrapper
+├── europepmc/          # Europe PMC adapter
+├── clinicaltrials/     # ClinicalTrials.gov adapter
+└── biorxiv/            # bioRxiv/medRxiv adapter
+```
+
+**Design principles:**
+- Python + Go implementations (same interface, different runtimes)
+- MCP tools, not REST API — zero integration overhead for agents
+- Database, not log files — structured queries across time
+- SQLite + WAL, not Postgres — until concurrent writers hit
+- Hard-fail, never degrade — paper without `retrieval_id` is worse than error
+- Live-API tests, no mocks — real XML/JSON shape catches real bugs
+
+## Development
+
+```bash
+# Python
+pip install -e .[dev]
+pytest tests/ -v
+
+# Go
+cd go-biolab
+go test ./...
+go build -o biolab ./cmd/cli
+go build -o biolab-server ./cmd/server
+```
+
+## Deployment
+
+| Target | Method |
+|--------|--------|
+| **Local** | `pipx install biolab-mcp` or download binary |
+| **CI/CD** | GitHub Actions → PyPI + GHCR + GitHub Releases |
+| **Containers** | `docker pull ghcr.io/srikarjy/biolab-mcp:latest` |
+| **Linux packages** | `.deb`, `.rpm`, `.apk` via goreleaser |
+
+## Roadmap
+
+- [ ] Evidence drift detection (retraction monitoring via response hashes)
+- [ ] Provenance graph (cross-source linking by DOI)
+- [ ] Nextflow/Snakemake plugins
+- [ ] Rate limiting + caching (audit-safe)
+- [ ] Auth + multi-tenant support
+
+## License
+
+MIT — see [LICENSE](LICENSE)
+
+## Author
+
+**Srikar Jy** — [srikarjy@gmail.com](mailto:srikarjy@gmail.com)

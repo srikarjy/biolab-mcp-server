@@ -1,6 +1,4 @@
-"""MCP server entrypoint. Registers the search_pubmed tool — see BLUEPRINT.md §2 for the
-full request flow (including why steps 2 and 4 both hard-fail instead of degrading).
-"""
+"""MCP server entrypoint. Registers the search_pubmed and get_retrieval tools."""
 
 import os
 
@@ -15,6 +13,9 @@ MAX_RESULTS_CAP = 50  # hard ceiling — an uncapped max_results lets a caller f
 
 mcp = FastMCP("biolab")
 _conn = db.connect(DB_PATH)
+
+# Start background writer for thread-safe DB writes
+retrieval_log.start_writer(DB_PATH)
 
 
 @mcp.tool()
@@ -39,14 +40,16 @@ def search_pubmed(query: str, agent_id: str, max_results: int = 5) -> dict:
 
     results = []
     for paper in papers:
+        retrieval_input = pubmed_client.paper_to_retrieval_input(paper)
         record = retrieval_log.write_retrieval(
             _conn,
             query_text=query,
-            pmid=paper.pmid,
+            external_id=retrieval_input["external_id"],
             agent_id=agent_id,
-            medline_status=paper.medline_status,
-            pub_status=paper.pub_status,
-            raw_response=paper.raw_xml,
+            source=retrieval_input["source"],
+            source_metadata=retrieval_input["source_metadata"],
+            raw_response=retrieval_input["raw_response"],
+            snapshot=retrieval_input["snapshot"],
         )
         results.append({
             "pmid": paper.pmid,
@@ -58,5 +61,37 @@ def search_pubmed(query: str, agent_id: str, max_results: int = 5) -> dict:
     return {"query_echo": query, "papers": results}
 
 
+@mcp.tool()
+def get_retrieval(retrieval_id: str) -> dict:
+    """Retrieve a full retrieval record by its retrieval_id.
+
+    Args:
+        retrieval_id: the UUID returned by search_pubmed
+    """
+    if not retrieval_id.strip():
+        raise ValueError("retrieval_id must not be empty")
+
+    record = retrieval_log.get_retrieval(_conn, retrieval_id)
+    if record is None:
+        raise ValueError(f"no retrieval found for id: {retrieval_id!r}")
+
+    import json
+    return {
+        "retrieval_id": record.retrieval_id,
+        "source": record.source,
+        "external_id": record.external_id,
+        "query_text": record.query_text,
+        "retrieved_at": record.retrieved_at,
+        "agent_id": record.agent_id,
+        "source_metadata": json.loads(record.source_metadata),
+        "raw_response": record.raw_response,
+        "snapshot": json.loads(record.snapshot),
+        "response_hash": record.response_hash,
+    }
+
+
 if __name__ == "__main__":
-    mcp.run()
+    try:
+        mcp.run()
+    finally:
+        retrieval_log.stop_writer()
