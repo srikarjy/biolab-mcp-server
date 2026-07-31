@@ -363,7 +363,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 
 	if showSnapshot {
 		var snapshot models.Snapshot
-		json.Unmarshal([]byte(record.Snapshot), &snapshot)
+		if err := json.Unmarshal([]byte(record.Snapshot), &snapshot); err != nil {
+			return fmt.Errorf("parsing snapshot: %w", err)
+		}
 		fmt.Printf("\nSnapshot:\n")
 		fmt.Printf("  Title: %s\n", snapshot.Title)
 		fmt.Printf("  Abstract: %s...\n", truncate(snapshot.Abstract, 200))
@@ -375,7 +377,9 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 
 	var sourceMeta models.SourceMetadata
-	json.Unmarshal([]byte(record.SourceMetadata), &sourceMeta)
+	if err := json.Unmarshal([]byte(record.SourceMetadata), &sourceMeta); err != nil {
+		return fmt.Errorf("parsing source metadata: %w", err)
+	}
 	fmt.Printf("\nSource Metadata: %+v\n", sourceMeta)
 	fmt.Printf("Response Hash: %s\n", record.ResponseHash[:16]+"...")
 
@@ -454,8 +458,12 @@ func runExport(cmd *cobra.Command, args []string) error {
 	for _, r := range records {
 		var sourceMeta models.SourceMetadata
 		var snapshot models.Snapshot
-		json.Unmarshal([]byte(r.SourceMetadata), &sourceMeta)
-		json.Unmarshal([]byte(r.Snapshot), &snapshot)
+		if err := json.Unmarshal([]byte(r.SourceMetadata), &sourceMeta); err != nil {
+			return fmt.Errorf("parsing source metadata for %s: %w", r.RetrievalID, err)
+		}
+		if err := json.Unmarshal([]byte(r.Snapshot), &snapshot); err != nil {
+			return fmt.Errorf("parsing snapshot for %s: %w", r.RetrievalID, err)
+		}
 
 		out := map[string]interface{}{
 			"retrieval_id":    r.RetrievalID,
@@ -468,7 +476,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 			"snapshot":        snapshot,
 			"response_hash":   r.ResponseHash,
 		}
-		enc.Encode(out)
+		if err := enc.Encode(out); err != nil {
+			return fmt.Errorf("writing record %s: %w", r.RetrievalID, err)
+		}
 	}
 
 	fmt.Printf("Exported %d records to %s\n", len(records), output)

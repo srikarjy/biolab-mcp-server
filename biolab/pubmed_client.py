@@ -1,6 +1,8 @@
 """Thin wrapper over PubMed E-utilities. No logging, no DB access — see retrieval_log.py."""
 
+import time
 from dataclasses import dataclass
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 from xml.etree import ElementTree as ET  # only for tostring() — safe, no untrusted parsing
@@ -12,6 +14,21 @@ import defusedxml.ElementTree as SafeET  # parses untrusted network XML; guards 
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 TIMEOUT_SECONDS = 10
+RATE_LIMIT_RETRIES = 3
+RATE_LIMIT_BACKOFF_SECONDS = 1.0
+
+
+def _urlopen_with_retry(url: str):
+    """urlopen with backoff on HTTP 429 — NCBI's unauthenticated rate limit (3 req/s)
+    is a known, transient constraint, not an application error worth failing on."""
+    for attempt in range(RATE_LIMIT_RETRIES + 1):
+        try:
+            return urlopen(url, timeout=TIMEOUT_SECONDS)
+        except HTTPError as e:
+            if e.code == 429 and attempt < RATE_LIMIT_RETRIES:
+                time.sleep(RATE_LIMIT_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            raise
 
 
 @dataclass
@@ -32,7 +49,7 @@ def search(query: str, max_results: int) -> list[str]:
         "retmode": "json",
         "retmax": max_results,
     })
-    with urlopen(f"{ESEARCH_URL}?{params}", timeout=TIMEOUT_SECONDS) as resp:
+    with _urlopen_with_retry(f"{ESEARCH_URL}?{params}") as resp:
         data = json.load(resp)
     return data["esearchresult"]["idlist"]
 
@@ -47,7 +64,7 @@ def fetch(pmids: list[str]) -> list[PubMedPaper]:
         "rettype": "abstract",
         "retmode": "xml",
     })
-    with urlopen(f"{EFETCH_URL}?{params}", timeout=TIMEOUT_SECONDS) as resp:
+    with _urlopen_with_retry(f"{EFETCH_URL}?{params}") as resp:
         root = SafeET.fromstring(resp.read())
     return [_parse_article(article) for article in root.findall("PubmedArticle")]
 

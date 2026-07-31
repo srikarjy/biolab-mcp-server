@@ -44,6 +44,9 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
+    hooks:
+      post:
+        - ./scripts/sign.sh {{.Path}}
 
 archives:
   - format: tar.gz
