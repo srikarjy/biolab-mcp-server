@@ -78,7 +78,7 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           working-directory: go-biolab
-          version: v2.17.1
+          version: latest
 
       - name: Set up Python
         uses: actions/setup-python@v5
