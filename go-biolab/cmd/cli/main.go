@@ -139,11 +139,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	client := pubmed.NewClient()
 	log := retrieval.NewLog(database)
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 
 	ctx := context.Background()
 	fmt.Printf("Searching PubMed: %s\n", query)
@@ -192,11 +192,11 @@ func runSearchEuropePMC(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	client := europepmc.NewClient()
 	log := retrieval.NewLog(database)
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 
 	ctx := context.Background()
 	fmt.Printf("Searching Europe PMC: %s\n", query)
@@ -242,11 +242,11 @@ func runSearchClinicalTrials(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	client := clinicaltrials.NewClient()
 	log := retrieval.NewLog(database)
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 
 	ctx := context.Background()
 	fmt.Printf("Searching ClinicalTrials.gov: %s\n", query)
@@ -286,11 +286,11 @@ func runSearchBioRxiv(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	client := biorxiv.NewClient()
 	log := retrieval.NewLog(database)
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 
 	ctx := context.Background()
 	fmt.Printf("Searching %s (category: %s):\n", server, category)
@@ -340,10 +340,10 @@ func runGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	log := retrieval.NewLog(database)
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 
 	ctx := context.Background()
 	record, err := log.Get(ctx, retrievalID)
@@ -398,10 +398,10 @@ func runList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	log := retrieval.NewLog(database)
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 
 	ctx := context.Background()
 	records, err := log.List(ctx, agentFilter, sourceFilter, limit)
@@ -437,10 +437,10 @@ func runExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	log := retrieval.NewLog(database)
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 
 	ctx := context.Background()
 	records, err := log.List(ctx, agentFilter, sourceFilter, 10000)
@@ -452,7 +452,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	enc := json.NewEncoder(f)
 	for _, r := range records {
@@ -493,11 +493,11 @@ func runDemo(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	client := pubmed.NewClient()
 	log := retrieval.NewLog(database)
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 
 	ctx := context.Background()
 
@@ -551,7 +551,9 @@ func runDemo(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		var snapshot models.Snapshot
-		json.Unmarshal([]byte(record.Snapshot), &snapshot)
+		if err := json.Unmarshal([]byte(record.Snapshot), &snapshot); err != nil {
+			return fmt.Errorf("parsing snapshot for %s: %w", rid, err)
+		}
 		fmt.Printf("  Title: %s\n", snapshot.Title)
 		fmt.Printf("  DOI: %s\n", snapshot.DOI)
 		fmt.Printf("  Journal: %s\n", snapshot.Journal.Title)

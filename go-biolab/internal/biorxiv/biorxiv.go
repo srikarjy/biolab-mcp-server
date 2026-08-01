@@ -93,7 +93,7 @@ func (c *Client) ListByDateRange(ctx context.Context, server, startDate, endDate
 		}
 
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			return nil, err
 		}
@@ -138,7 +138,7 @@ func (c *Client) ListByCategory(ctx context.Context, server, category string, ma
 	}
 
 	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +164,7 @@ func (c *Client) FetchJATSXML(ctx context.Context, jatsURL string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -234,7 +234,7 @@ func (c *Client) ListByDateRangeAndCategoryRaw(ctx context.Context, server, star
 		}
 
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			return nil, err
 		}

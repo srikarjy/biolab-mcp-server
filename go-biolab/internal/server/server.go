@@ -402,8 +402,12 @@ func (a *App) handleGetRetrieval(ctx context.Context, request mcp.CallToolReques
 
 	var sourceMeta models.SourceMetadata
 	var snapshot models.Snapshot
-	json.Unmarshal([]byte(record.SourceMetadata), &sourceMeta)
-	json.Unmarshal([]byte(record.Snapshot), &snapshot)
+	if err := json.Unmarshal([]byte(record.SourceMetadata), &sourceMeta); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("parsing source metadata: %v", err)), nil
+	}
+	if err := json.Unmarshal([]byte(record.Snapshot), &snapshot); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("parsing snapshot: %v", err)), nil
+	}
 
 	output := map[string]interface{}{
 		"retrieval_id":    record.RetrievalID,
@@ -440,7 +444,7 @@ func Main() {
 		fmt.Fprintf(os.Stderr, "Failed to initialize: %v\n", err)
 		os.Exit(1)
 	}
-	defer app.Close()
+	defer func() { _ = app.Close() }()
 
 	if err := app.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)

@@ -86,7 +86,7 @@ func (c *Client) Search(ctx context.Context, query string, maxResults int) ([]Se
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -115,7 +115,7 @@ func (c *Client) FetchFullText(ctx context.Context, id, source string) (string, 
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
