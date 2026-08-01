@@ -14,7 +14,7 @@ jobs:
     runs-on: ${{matrix.os}}
     strategy:
       matrix:
-        go: ["1.23"]
+        go: ["1.25"]
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
@@ -39,8 +39,8 @@ jobs:
       - name: Build
         run: |
           cd go-biolab
-          CGO_ENABLED=1 go build -o biolab ./cmd/cli
-          CGO_ENABLED=1 go build -o biolab-server ./cmd/server
+          CGO_ENABLED=0 go build -o biolab ./cmd/cli
+          CGO_ENABLED=0 go build -o biolab-server ./cmd/server
 
   test-python:
     name: Test Python
@@ -72,7 +72,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: "1.25"
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
@@ -111,7 +111,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: "1.25"
           cache: true
           cache-dependency-path: go-biolab/go.sum
 

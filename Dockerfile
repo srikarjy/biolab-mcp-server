@@ -1,33 +1,15 @@
-# Dockerfile for Go version
-FROM golang:1.23-alpine AS builder
-
-# Install build dependencies
-RUN apk add --no-cache gcc musl-dev sqlite-dev
-
-WORKDIR /app
-
-# Copy go mod files first for caching
-COPY go-biolab/go.mod go-biolab/go.sum ./
-RUN go mod download
-
-# Copy source
-COPY go-biolab/ ./
-
-# Build both binaries
-RUN CGO_ENABLED=1 go build -o biolab ./cmd/cli
-RUN CGO_ENABLED=1 go build -o biolab-server ./cmd/server
-
-# Final stage
+# Dockerfile for Go version. Runtime-only: goreleaser cross-compiles the static
+# (CGO_ENABLED=0) binaries and hands them to this image as build-context files —
+# rebuilding from source inside Docker would be redundant and, worse, would need
+# the full go-biolab/ tree, which goreleaser's docker build context doesn't include.
 FROM alpine:3.20
 
-# Install runtime dependencies
-RUN apk add --no-cache sqlite-libs ca-certificates
+RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
 
-# Copy binaries
-COPY --from=builder /app/biolab /usr/local/bin/biolab
-COPY --from=builder /app/biolab-server /usr/local/bin/biolab-server
+COPY biolab /usr/local/bin/biolab
+COPY biolab-server /usr/local/bin/biolab-server
 
 # Create data directory for SQLite
 RUN mkdir -p /data

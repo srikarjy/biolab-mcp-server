@@ -3,8 +3,8 @@ package db
 import (
 	"fmt"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/jmoiron/sqlx"
+	_ "modernc.org/sqlite"
 )
 
 var Schema = `
@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_retrievals_source ON retrievals(source);
 `
 
 func Connect(dbPath string) (*sqlx.DB, error) {
-	db, err := sqlx.Connect("sqlite3", dbPath)
+	db, err := sqlx.Connect("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}

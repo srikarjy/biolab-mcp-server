@@ -1,16 +1,19 @@
 # .goreleaser.yml
+version: 2
+
 project_name: biolab
 
 before:
   hooks:
-    - go mod tidy
+    - sh -c "cd go-biolab && go mod tidy"
 
 builds:
   - id: biolab
+    dir: go-biolab
     main: ./cmd/cli/main.go
     binary: biolab
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - linux
       - darwin
@@ -28,10 +31,11 @@ builds:
         - ./scripts/sign.sh {{.Path}}
 
   - id: biolab-server
+    dir: go-biolab
     main: ./cmd/server/main.go
     binary: biolab-server
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - linux
       - darwin
@@ -54,7 +58,7 @@ archives:
     files:
       - LICENSE
       - README.md
-    builds:
+    ids:
       - biolab
       - biolab-server
 
@@ -88,7 +92,7 @@ dockers:
     dockerfile: Dockerfile
     goos: linux
     goarch: amd64
-    builds:
+    ids:
       - biolab
       - biolab-server
 
@@ -102,18 +106,16 @@ nfpms:
       - deb
       - rpm
       - apk
-    binds:
-      - /usr/local/bin/biolab
-    builds:
+    ids:
       - biolab
       - biolab-server
 
 brews:
   - name: biolab
-    tap:
+    repository:
       owner: srikarjy
       name: homebrew-tap
-    folder: Formula
+    directory: Formula
     homepage: https://github.com/srikarjy/biolab-mcp
     license: MIT
     description: "MCP server for auditable biological database queries"
@@ -121,8 +123,8 @@ brews:
       bin.install "biolab"
       bin.install "biolab-server"
 
-scoop:
-  - bucket:
+scoops:
+  - repository:
       owner: srikarjy
       name: scoop-bucket
     name: biolab
