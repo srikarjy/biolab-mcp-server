@@ -81,7 +81,7 @@ changelog:
 release:
   github:
     owner: srikarjy
-    name: biolab-mcp
+    name: biolab-mcp-server
   draft: false
   prerelease: auto
 
@@ -110,24 +110,6 @@ nfpms:
       - biolab
       - biolab-server
 
-brews:
-  - name: biolab
-    repository:
-      owner: srikarjy
-      name: homebrew-tap
-    directory: Formula
-    homepage: https://github.com/srikarjy/biolab-mcp
-    license: MIT
-    description: "MCP server for auditable biological database queries"
-    install: |
-      bin.install "biolab"
-      bin.install "biolab-server"
-
-scoops:
-  - repository:
-      owner: srikarjy
-      name: scoop-bucket
-    name: biolab
-    description: "MCP server for auditable biological database queries"
-    license: MIT
-    homepage: https://github.com/srikarjy/biolab-mcp
+# brews/scoops publish to srikarjy/homebrew-tap and srikarjy/scoop-bucket, which
+# don't exist yet (README already marks Homebrew as "coming soon"). Add these back
+# once those repos are created — creating them isn't this pipeline's job.
