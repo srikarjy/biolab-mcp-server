@@ -17,17 +17,20 @@ from mcp.client.stdio import stdio_client
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-async def _call_search_pubmed(db_path: str, arguments: dict):
+async def _call_tool(db_path: str, tool_name: str, arguments: dict):
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "biolab.server"],
         cwd=str(PROJECT_ROOT),
         env={**os.environ, "BIOLAB_DB_PATH": db_path},
     )
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            return await session.call_tool("search_pubmed", arguments)
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        return await session.call_tool(tool_name, arguments)
+
+
+async def _call_search_pubmed(db_path: str, arguments: dict):
+    return await _call_tool(db_path, "search_pubmed", arguments)
 
 
 def _row_count(db_path: str) -> int:
@@ -74,3 +77,60 @@ async def test_search_pubmed_max_results_over_cap_errors_and_writes_nothing(tmp_
 
     assert result.isError is True
     assert _row_count(db_path) == 0
+
+
+@pytest.mark.asyncio
+async def test_search_europepmc_live_end_to_end(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    result = await _call_tool(
+        db_path,
+        "search_europepmc",
+        {"query": "BRCA1 pancreatic cancer", "agent_id": "test:agent", "max_results": 2},
+    )
+
+    assert result.isError is False
+    payload = json.loads(result.content[0].text)
+    assert len(payload["articles"]) == 2
+    for article in payload["articles"]:
+        assert article["retrieval_id"]
+        assert article["title"]
+
+    assert _row_count(db_path) == 2
+
+
+@pytest.mark.asyncio
+async def test_search_clinicaltrials_live_end_to_end(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    result = await _call_tool(
+        db_path,
+        "search_clinicaltrials",
+        {"query": "pancreatic cancer", "agent_id": "test:agent", "max_results": 2},
+    )
+
+    assert result.isError is False
+    payload = json.loads(result.content[0].text)
+    assert len(payload["studies"]) == 2
+    for study in payload["studies"]:
+        assert study["nct_id"].startswith("NCT")
+        assert study["retrieval_id"]
+
+    assert _row_count(db_path) == 2
+
+
+@pytest.mark.asyncio
+async def test_search_biorxiv_live_end_to_end(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    result = await _call_tool(
+        db_path,
+        "search_biorxiv",
+        {"category": "neuroscience", "agent_id": "test:agent", "max_results": 2},
+    )
+
+    assert result.isError is False
+    payload = json.loads(result.content[0].text)
+    assert len(payload["preprints"]) == 2
+    for preprint in payload["preprints"]:
+        assert preprint["retrieval_id"]
+        assert preprint["title"]
+
+    assert _row_count(db_path) == 2

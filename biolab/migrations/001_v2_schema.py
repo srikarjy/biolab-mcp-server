@@ -11,8 +11,6 @@ v2 schema (source-agnostic):
 import hashlib
 import json
 import sqlite3
-from pathlib import Path
-
 
 SCHEMA_V2 = """
 CREATE TABLE IF NOT EXISTS retrievals_v2 (

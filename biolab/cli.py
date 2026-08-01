@@ -1,12 +1,13 @@
 """Biolab CLI — query and explore the retrieval audit trail."""
 
+import builtins
 import json
 from pathlib import Path
 
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.syntax import Syntax
+from rich.table import Table
 
 from biolab import db, retrieval_log
 
@@ -30,7 +31,7 @@ def search(
     db_path: str = typer.Option("biolab.db", "--db", help="Path to SQLite database"),
 ):
     """Search PubMed and log retrievals to the audit trail."""
-    from biolab.pubmed_client import search_and_fetch, paper_to_retrieval_input
+    from biolab.pubmed_client import paper_to_retrieval_input, search_and_fetch
 
     if not 1 <= max_results <= 50:
         console.print("[red]max_results must be between 1 and 50[/red]")
@@ -60,6 +61,136 @@ def search(
         )
         console.print(f"  [bold]{paper.pmid}[/bold] → retrieval_id: [dim]{record.retrieval_id}[/dim]")
         console.print(f"    Title: {paper.title[:80]}...")
+
+
+@app.command(name="search-europepmc")
+def search_europepmc(
+    query: str = typer.Argument(..., help="Search query (sent to Europe PMC verbatim)"),
+    agent_id: str = typer.Option("cli:user", "--agent", "-a", help="Agent identifier"),
+    max_results: int = typer.Option(5, "--max", "-n", help="Max articles to retrieve (1-50)"),
+    db_path: str = typer.Option("biolab.db", "--db", help="Path to SQLite database"),
+):
+    """Search Europe PMC and log retrievals to the audit trail."""
+    from biolab import europepmc_client
+
+    if not 1 <= max_results <= 50:
+        console.print("[red]max_results must be between 1 and 50[/red]")
+        raise typer.Exit(1)
+
+    conn = _get_conn(db_path)
+    console.print(f"[cyan]Searching Europe PMC:[/cyan] {query}")
+
+    articles = europepmc_client.search_and_fetch(query, max_results)
+    if not articles:
+        console.print("[yellow]No results found[/yellow]")
+        return
+
+    console.print(f"[green]Found {len(articles)} articles[/green]")
+
+    for article in articles:
+        retrieval_input = europepmc_client.paper_to_retrieval_input(article)
+        record = retrieval_log.write_retrieval(
+            conn,
+            query_text=query,
+            external_id=retrieval_input["external_id"],
+            agent_id=agent_id,
+            source=retrieval_input["source"],
+            source_metadata=retrieval_input["source_metadata"],
+            raw_response=retrieval_input["raw_response"],
+            snapshot=retrieval_input["snapshot"],
+        )
+        console.print(f"  [bold]{article.id}[/bold] → retrieval_id: [dim]{record.retrieval_id}[/dim]")
+        console.print(f"    Title: {article.title[:80]}...")
+
+
+@app.command(name="search-clinicaltrials")
+def search_clinicaltrials(
+    query: str = typer.Argument(..., help="Condition/disease search query"),
+    agent_id: str = typer.Option("cli:user", "--agent", "-a", help="Agent identifier"),
+    max_results: int = typer.Option(5, "--max", "-n", help="Max studies to retrieve (1-50)"),
+    db_path: str = typer.Option("biolab.db", "--db", help="Path to SQLite database"),
+):
+    """Search ClinicalTrials.gov and log retrievals to the audit trail."""
+    from biolab import clinicaltrials_client
+
+    if not 1 <= max_results <= 50:
+        console.print("[red]max_results must be between 1 and 50[/red]")
+        raise typer.Exit(1)
+
+    conn = _get_conn(db_path)
+    console.print(f"[cyan]Searching ClinicalTrials.gov:[/cyan] {query}")
+
+    studies = clinicaltrials_client.search_and_fetch(query, max_results)
+    if not studies:
+        console.print("[yellow]No results found[/yellow]")
+        return
+
+    console.print(f"[green]Found {len(studies)} studies[/green]")
+
+    for study in studies:
+        retrieval_input = clinicaltrials_client.paper_to_retrieval_input(study)
+        record = retrieval_log.write_retrieval(
+            conn,
+            query_text=query,
+            external_id=retrieval_input["external_id"],
+            agent_id=agent_id,
+            source=retrieval_input["source"],
+            source_metadata=retrieval_input["source_metadata"],
+            raw_response=retrieval_input["raw_response"],
+            snapshot=retrieval_input["snapshot"],
+        )
+        console.print(f"  [bold]{study.nct_id}[/bold] → retrieval_id: [dim]{record.retrieval_id}[/dim]")
+        console.print(f"    Title: {study.brief_title[:80]}...")
+        console.print(f"    Status: {study.overall_status} | Phase: {study.phase}")
+
+
+@app.command(name="search-biorxiv")
+def search_biorxiv(
+    category: str = typer.Argument(..., help='Category (e.g. "neuroscience") or "all"'),
+    agent_id: str = typer.Option("cli:user", "--agent", "-a", help="Agent identifier"),
+    max_results: int = typer.Option(5, "--max", "-n", help="Max preprints to retrieve (1-50)"),
+    server: str = typer.Option("biorxiv", "--server", help='"biorxiv" or "medrxiv"'),
+    db_path: str = typer.Option("biolab.db", "--db", help="Path to SQLite database"),
+):
+    """List bioRxiv/medRxiv preprints by category and log retrievals to the audit trail.
+
+    No free-text search exists on this API — only category listing (last 30 days).
+    """
+    from biolab import biorxiv_client
+
+    if not 1 <= max_results <= 50:
+        console.print("[red]max_results must be between 1 and 50[/red]")
+        raise typer.Exit(1)
+    if server not in ("biorxiv", "medrxiv"):
+        console.print('[red]server must be "biorxiv" or "medrxiv"[/red]')
+        raise typer.Exit(1)
+
+    conn = _get_conn(db_path)
+    console.print(f"[cyan]Searching {server} (category: {category}):[/cyan]")
+
+    preprints = biorxiv_client.list_and_fetch(server, category, max_results)
+    if not preprints:
+        console.print("[yellow]No results found[/yellow]")
+        return
+
+    console.print(f"[green]Found {len(preprints)} preprints[/green]")
+
+    query_text = f"category:{category}"
+    for preprint in preprints:
+        retrieval_input = biorxiv_client.paper_to_retrieval_input(preprint, server)
+        record = retrieval_log.write_retrieval(
+            conn,
+            query_text=query_text,
+            external_id=retrieval_input["external_id"],
+            agent_id=agent_id,
+            source=retrieval_input["source"],
+            source_metadata=retrieval_input["source_metadata"],
+            raw_response=retrieval_input["raw_response"],
+            snapshot=retrieval_input["snapshot"],
+        )
+        console.print(f"  [bold]{preprint.doi}[/bold] → retrieval_id: [dim]{record.retrieval_id}[/dim]")
+        console.print(f"    Title: {preprint.title[:80]}...")
+        console.print(f"    Category: {preprint.category} | Date: {preprint.date}")
 
 
 @app.command()
@@ -116,7 +247,7 @@ def list(
     conn = _get_conn(db_path)
 
     where_clauses = []
-    params = []
+    params: builtins.list[str | int] = []
     if agent_id:
         where_clauses.append("agent_id = ?")
         params.append(agent_id)
@@ -217,7 +348,7 @@ def demo(
     db_path: str = typer.Option("biolab.db", "--db", help="Path to SQLite database"),
 ):
     """Run the full demo: search → show retrieval_id → get full record."""
-    from biolab.pubmed_client import search_and_fetch, paper_to_retrieval_input
+    from biolab.pubmed_client import paper_to_retrieval_input, search_and_fetch
 
     console.print("[bold cyan]═══ BIOLAB DEMO ═══[/bold cyan]")
     console.print(f"Query: [bold]{query}[/bold]")
@@ -254,18 +385,18 @@ def demo(
         console.print(f"    Title: {paper.title[:70]}...")
 
     # Step 3: Retrieve full record by retrieval_id
-    console.print(f"\n[cyan]Step 3: Retrieve full audit record by retrieval_id[/cyan]")
+    console.print("\n[cyan]Step 3: Retrieve full audit record by retrieval_id[/cyan]")
     for rid in retrieval_ids:
         console.print(f"\n  [bold]Retrieval ID:[/bold] {rid}")
-        record = retrieval_log.get_retrieval(conn, rid)
-        if record:
-            snap = json.loads(record.snapshot)
+        fetched_record = retrieval_log.get_retrieval(conn, rid)
+        if fetched_record:
+            snap = json.loads(fetched_record.snapshot)
             console.print(f"  Title: {snap.get('title')}")
             console.print(f"  DOI: {snap.get('doi')}")
             console.print(f"  Journal: {snap.get('journal', {}).get('title')}")
-            console.print(f"  Retrieved: {record.retrieved_at}")
-            console.print(f"  Source: {record.source}")
-            console.print(f"  Hash: {record.response_hash[:16]}...")
+            console.print(f"  Retrieved: {fetched_record.retrieved_at}")
+            console.print(f"  Source: {fetched_record.source}")
+            console.print(f"  Hash: {fetched_record.response_hash[:16]}...")
 
     console.print("\n[bold green]✓ Demo complete[/bold green]")
     console.print("Each retrieval_id creates an unforgeable link from conclusion → raw source.")

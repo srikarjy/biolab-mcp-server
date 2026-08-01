@@ -11,13 +11,11 @@ import queue
 import sqlite3
 import threading
 import uuid
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
 from biolab.models import RetrievalRecord
 
-
-_write_queue: queue.Queue[tuple] = queue.Queue()
+_write_queue: queue.Queue[tuple | None] = queue.Queue()
 _writer_thread: threading.Thread | None = None
 _writer_stop = threading.Event()
 _writer_db_path: str | None = None
@@ -132,7 +130,7 @@ def write_retrieval(
         source=source,
         external_id=external_id,
         query_text=query_text,
-        retrieved_at=datetime.now(timezone.utc).isoformat(),
+        retrieved_at=datetime.now(UTC).isoformat(),
         agent_id=agent_id,
         source_metadata=json.dumps(source_metadata),
         raw_response=raw_response,

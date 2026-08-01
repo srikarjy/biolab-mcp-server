@@ -8,7 +8,6 @@ real data, and that discipline extends to the test suite, not just manual verifi
 import time
 
 import pytest
-
 from biolab.pubmed_client import fetch, search, search_and_fetch
 
 

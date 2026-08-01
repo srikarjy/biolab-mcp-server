@@ -1,15 +1,14 @@
 """Thin wrapper over PubMed E-utilities. No logging, no DB access — see retrieval_log.py."""
 
+import json
 import time
 from dataclasses import dataclass
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 from xml.etree import ElementTree as ET  # only for tostring() — safe, no untrusted parsing
-import json
 
-import defusedxml.ElementTree as SafeET  # parses untrusted network XML; guards against
-                                           # entity-expansion ("billion laughs") attacks
+import defusedxml.ElementTree as SafeET  # parses untrusted network XML; guards against entity-expansion ("billion laughs") attacks
 
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -85,7 +84,9 @@ def _full_text(element: ET.Element | None) -> str:
 
 def _parse_article(article: ET.Element) -> PubMedPaper:
     medline_citation = article.find("MedlineCitation")
-    pmid = medline_citation.findtext("PMID")
+    if medline_citation is None:
+        raise ValueError("PubmedArticle missing required MedlineCitation element")
+    pmid = medline_citation.findtext("PMID") or ""
     title = _full_text(medline_citation.find(".//ArticleTitle"))
     abstract = " ".join(
         _full_text(node) for node in medline_citation.findall(".//AbstractText")
