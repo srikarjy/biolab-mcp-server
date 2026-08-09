@@ -76,10 +76,13 @@ def start_writer(db_path: str) -> None:
 
 def stop_writer() -> None:
     """Stop the background writer thread (call at shutdown)."""
+    global _writer_thread, _writer_db_path
     _writer_stop.set()
     _write_queue.put(None)
     if _writer_thread is not None:
         _writer_thread.join(timeout=5)
+    _writer_thread = None
+    _writer_db_path = None
 
 
 def _write_sync(
@@ -87,27 +90,32 @@ def _write_sync(
     record: RetrievalRecord,
 ) -> None:
     """Synchronous write fallback (used in tests or when writer not running)."""
-    conn.execute(
-        """
-        INSERT INTO retrievals
-            (retrieval_id, source, external_id, query_text, retrieved_at,
-             agent_id, source_metadata, raw_response, snapshot, response_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            record.retrieval_id,
-            record.source,
-            record.external_id,
-            record.query_text,
-            record.retrieved_at,
-            record.agent_id,
-            record.source_metadata,
-            record.raw_response,
-            record.snapshot,
-            record.response_hash,
-        ),
-    )
-    conn.commit()
+    try:
+        conn.execute(
+            """
+            INSERT INTO retrievals
+                (retrieval_id, source, external_id, query_text, retrieved_at,
+                 agent_id, source_metadata, raw_response, snapshot, response_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.retrieval_id,
+                record.source,
+                record.external_id,
+                record.query_text,
+                record.retrieved_at,
+                record.agent_id,
+                record.source_metadata,
+                record.raw_response,
+                record.snapshot,
+                record.response_hash,
+            ),
+        )
+        conn.commit()
+    except Exception:
+        # Rollback on any error to avoid leaving partial transactions
+        conn.rollback()
+        raise
 
 
 def write_retrieval(
