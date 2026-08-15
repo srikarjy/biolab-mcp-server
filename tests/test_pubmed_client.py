@@ -65,3 +65,27 @@ def test_search_and_fetch_end_to_end():
         assert paper.title
         assert paper.abstract
         assert paper.raw_xml
+
+
+def test_burst_of_concurrent_searches_does_not_trigger_a_429():
+    """A burst of concurrent search() calls (simulating simultaneous MCP tool
+    calls) must not trip NCBI's rate limit — pubmed_client._rate_limiter paces
+    requests client-side regardless of how many callers fire at once."""
+    import threading
+    from urllib.error import HTTPError
+
+    errors: list[Exception] = []
+
+    def do_search(i: int) -> None:
+        try:
+            search("cancer", 1)
+        except HTTPError as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=do_search, args=(i,)) for i in range(20)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []

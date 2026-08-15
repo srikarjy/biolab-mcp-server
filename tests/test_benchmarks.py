@@ -74,6 +74,7 @@ def make_retrieval_record(
         raw_response=raw_response,
         snapshot=json.dumps(snapshot),
         response_hash=response_hash,
+        prev_hash="",
     )
     return record.retrieval_id, record.source_metadata, record.snapshot, record.raw_response
 

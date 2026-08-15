@@ -1,6 +1,8 @@
 """Thin wrapper over PubMed E-utilities. No logging, no DB access — see retrieval_log.py."""
 
 import json
+import os
+import threading
 import time
 from dataclasses import dataclass
 from urllib.error import HTTPError
@@ -16,11 +18,46 @@ TIMEOUT_SECONDS = 10
 RATE_LIMIT_RETRIES = 3
 RATE_LIMIT_BACKOFF_SECONDS = 1.0
 
+NCBI_API_KEY = os.environ.get("NCBI_API_KEY") or None
+# NCBI raises the rate limit from 3 req/s to 10 req/s for callers that send an api_key.
+REQUESTS_PER_SECOND = 10.0 if NCBI_API_KEY else 3.0
+
+
+class _RateLimiter:
+    """Thread-safe client-side pacer so a burst of concurrent MCP tool calls
+    can't exceed NCBI's rate limit, whether or not an API key is configured."""
+
+    def __init__(self, requests_per_second: float):
+        self._min_interval = 1.0 / requests_per_second
+        self._lock = threading.Lock()
+        self._next_allowed_at = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            start_at = max(now, self._next_allowed_at)
+            self._next_allowed_at = start_at + self._min_interval
+        sleep_for = start_at - now
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+
+
+_rate_limiter = _RateLimiter(REQUESTS_PER_SECOND)
+
+
+def _with_api_key(params: dict) -> dict:
+    if NCBI_API_KEY:
+        params = {**params, "api_key": NCBI_API_KEY}
+    return params
+
 
 def _urlopen_with_retry(url: str):
-    """urlopen with backoff on HTTP 429 — NCBI's unauthenticated rate limit (3 req/s)
-    is a known, transient constraint, not an application error worth failing on."""
+    """urlopen with backoff on HTTP 429 — NCBI's rate limit (3 req/s unauthenticated,
+    10 req/s with an API key) is a known, transient constraint, not an application
+    error worth failing on. Client-side pacing (_rate_limiter) should keep this from
+    firing in normal operation; the retry is a safety net for the rest."""
     for attempt in range(RATE_LIMIT_RETRIES + 1):
+        _rate_limiter.wait()
         try:
             return urlopen(url, timeout=TIMEOUT_SECONDS)
         except HTTPError as e:
@@ -42,12 +79,12 @@ class PubMedPaper:
 
 def search(query: str, max_results: int) -> list[str]:
     """esearch: query string -> list of PMIDs."""
-    params = urlencode({
+    params = urlencode(_with_api_key({
         "db": "pubmed",
         "term": query,
         "retmode": "json",
         "retmax": max_results,
-    })
+    }))
     with _urlopen_with_retry(f"{ESEARCH_URL}?{params}") as resp:
         data = json.load(resp)
     return data["esearchresult"]["idlist"]
@@ -57,12 +94,12 @@ def fetch(pmids: list[str]) -> list[PubMedPaper]:
     """efetch: PMIDs -> parsed paper records, each carrying its own raw XML snapshot."""
     if not pmids:
         return []
-    params = urlencode({
+    params = urlencode(_with_api_key({
         "db": "pubmed",
         "id": ",".join(pmids),
         "rettype": "abstract",
         "retmode": "xml",
-    })
+    }))
     with _urlopen_with_retry(f"{EFETCH_URL}?{params}") as resp:
         root = SafeET.fromstring(resp.read())
     return [_parse_article(article) for article in root.findall("PubmedArticle")]

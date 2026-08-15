@@ -8,11 +8,14 @@ Includes a write-queue for concurrent access safety (v2+).
 
 import json
 import queue
-import sqlite3
 import threading
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
+import libsql
+
+from biolab import db as db_module
 from biolab.models import RetrievalRecord
 
 _write_queue: queue.Queue[tuple | None] = queue.Queue()
@@ -22,8 +25,9 @@ _writer_db_path: str | None = None
 
 
 def _writer_loop(db_path: str) -> None:
-    """Writer loop runs in its own thread with its own SQLite connection."""
-    conn = sqlite3.connect(db_path, check_same_thread=False)
+    """Writer loop runs in its own thread with its own libSQL connection."""
+    target, token = db_module.resolve_target(db_path)
+    conn = libsql.connect(target, auth_token=token) if token else libsql.connect(target)
     try:
         while not _writer_stop.is_set() or not _write_queue.empty():
             try:
@@ -34,26 +38,7 @@ def _writer_loop(db_path: str) -> None:
                 break
             record, done_event = item
             try:
-                conn.execute(
-                    """
-                    INSERT INTO retrievals
-                        (retrieval_id, source, external_id, query_text, retrieved_at,
-                         agent_id, source_metadata, raw_response, snapshot, response_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        record.retrieval_id,
-                        record.source,
-                        record.external_id,
-                        record.query_text,
-                        record.retrieved_at,
-                        record.agent_id,
-                        record.source_metadata,
-                        record.raw_response,
-                        record.snapshot,
-                        record.response_hash,
-                    ),
-                )
+                _chain_and_insert(conn, record)
                 conn.commit()
             finally:
                 done_event.set()
@@ -64,12 +49,13 @@ def _writer_loop(db_path: str) -> None:
 def start_writer(db_path: str) -> None:
     """Start the background writer thread (call once at server startup)."""
     global _writer_thread, _writer_db_path
+    target, _ = db_module.resolve_target(db_path)
     if _writer_thread is not None and _writer_thread.is_alive():
-        if _writer_db_path == db_path:
+        if _writer_db_path == target:
             return  # already running for this db
         stop_writer()  # different db, restart
     _writer_stop.clear()
-    _writer_db_path = db_path
+    _writer_db_path = target
     _writer_thread = threading.Thread(target=_writer_loop, args=(db_path,), daemon=True)
     _writer_thread.start()
 
@@ -85,32 +71,62 @@ def stop_writer() -> None:
     _writer_db_path = None
 
 
+def get_last_hash(conn: Any) -> str:
+    """The response_hash of the most recently inserted row, or "" if the table is empty.
+
+    This is the genesis value a fresh chain starts from.
+    """
+    row = conn.execute("SELECT response_hash FROM retrievals ORDER BY rowid DESC LIMIT 1").fetchone()
+    return row[0] if row else ""
+
+
+def _chain_and_insert(conn: Any, record: RetrievalRecord) -> None:
+    """Compute this row's chained hash and insert it.
+
+    Must run on whichever path is currently serializing writes (the background
+    writer thread, or — when no writer is running — the caller's own thread via
+    _write_sync) so that reading the last hash and inserting the next row is
+    never interleaved with another writer doing the same (AD-9).
+    """
+    import hashlib
+
+    record.prev_hash = get_last_hash(conn)
+    record.response_hash = hashlib.sha256(
+        (record.prev_hash + record.raw_response + record.retrieval_id + record.retrieved_at).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+    conn.execute(
+        """
+        INSERT INTO retrievals
+            (retrieval_id, source, external_id, query_text, retrieved_at,
+             agent_id, source_metadata, raw_response, snapshot, response_hash, prev_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            record.retrieval_id,
+            record.source,
+            record.external_id,
+            record.query_text,
+            record.retrieved_at,
+            record.agent_id,
+            record.source_metadata,
+            record.raw_response,
+            record.snapshot,
+            record.response_hash,
+            record.prev_hash,
+        ),
+    )
+
+
 def _write_sync(
-    conn: sqlite3.Connection,
+    conn: Any,
     record: RetrievalRecord,
 ) -> None:
     """Synchronous write fallback (used in tests or when writer not running)."""
     try:
-        conn.execute(
-            """
-            INSERT INTO retrievals
-                (retrieval_id, source, external_id, query_text, retrieved_at,
-                 agent_id, source_metadata, raw_response, snapshot, response_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record.retrieval_id,
-                record.source,
-                record.external_id,
-                record.query_text,
-                record.retrieved_at,
-                record.agent_id,
-                record.source_metadata,
-                record.raw_response,
-                record.snapshot,
-                record.response_hash,
-            ),
-        )
+        _chain_and_insert(conn, record)
         conn.commit()
     except Exception:
         # Rollback on any error to avoid leaving partial transactions
@@ -118,8 +134,41 @@ def _write_sync(
         raise
 
 
+def verify_chain(conn: Any) -> tuple[bool, str | None]:
+    """Walk the retrieval log in insertion order and verify the hash chain.
+
+    Returns (True, None) if every row is internally consistent. Returns
+    (False, retrieval_id) for the first row where the chain breaks — either its
+    stored prev_hash doesn't match the previous row's response_hash, or its
+    response_hash doesn't match what recomputing from its own content plus
+    prev_hash produces (i.e. the row itself, or a row before it, was tampered
+    with or deleted).
+    """
+    import hashlib
+
+    rows = conn.execute(
+        """
+        SELECT retrieval_id, raw_response, retrieved_at, prev_hash, response_hash
+        FROM retrievals ORDER BY rowid ASC
+        """
+    ).fetchall()
+
+    expected_prev = ""
+    for retrieval_id, raw_response, retrieved_at, prev_hash, response_hash in rows:
+        if prev_hash != expected_prev:
+            return False, retrieval_id
+        recomputed = hashlib.sha256(
+            (prev_hash + raw_response + retrieval_id + retrieved_at).encode("utf-8")
+        ).hexdigest()
+        if recomputed != response_hash:
+            return False, retrieval_id
+        expected_prev = response_hash
+
+    return True, None
+
+
 def write_retrieval(
-    conn: sqlite3.Connection,
+    conn: Any,
     query_text: str,
     external_id: str,
     agent_id: str,
@@ -128,11 +177,12 @@ def write_retrieval(
     raw_response: str,
     snapshot: dict,
 ) -> RetrievalRecord:
-    """Write a retrieval record. Uses background writer for thread safety."""
-    import hashlib
+    """Write a retrieval record. Uses background writer for thread safety.
 
-    response_hash = hashlib.sha256(raw_response.encode("utf-8")).hexdigest()
-
+    response_hash/prev_hash are computed inside the serialized write path
+    (_chain_and_insert), not here, so chaining stays correct under concurrent
+    callers — see _chain_and_insert's docstring.
+    """
     record = RetrievalRecord(
         retrieval_id=str(uuid.uuid4()),
         source=source,
@@ -143,14 +193,15 @@ def write_retrieval(
         source_metadata=json.dumps(source_metadata),
         raw_response=raw_response,
         snapshot=json.dumps(snapshot),
-        response_hash=response_hash,
+        response_hash="",
+        prev_hash="",
     )
 
-    # Check if writer is running for this database
+    # Check if writer is running for the database `conn` was connected to
     global _writer_thread, _writer_db_path
-    db_path = conn.execute("PRAGMA database_list").fetchone()[2]
+    target = db_module.current_target()
 
-    if _writer_thread is not None and _writer_thread.is_alive() and _writer_db_path == db_path:
+    if _writer_thread is not None and _writer_thread.is_alive() and _writer_db_path == target:
         # Use background writer
         done_event = threading.Event()
         _write_queue.put((record, done_event))
@@ -162,12 +213,12 @@ def write_retrieval(
     return record
 
 
-def get_retrieval(conn: sqlite3.Connection, retrieval_id: str) -> RetrievalRecord | None:
+def get_retrieval(conn: Any, retrieval_id: str) -> RetrievalRecord | None:
     """Retrieve a single retrieval record by ID."""
     row = conn.execute(
         """
         SELECT retrieval_id, source, external_id, query_text, retrieved_at,
-               agent_id, source_metadata, raw_response, snapshot, response_hash
+               agent_id, source_metadata, raw_response, snapshot, response_hash, prev_hash
         FROM retrievals WHERE retrieval_id = ?
         """,
         (retrieval_id,),
@@ -187,4 +238,5 @@ def get_retrieval(conn: sqlite3.Connection, retrieval_id: str) -> RetrievalRecor
         raw_response=row[7],
         snapshot=row[8],
         response_hash=row[9],
+        prev_hash=row[10],
     )
