@@ -26,6 +26,7 @@ dependencies = [
     "defusedxml>=0.7.1",
     "typer>=0.12",
     "rich>=13.7",
+    "libsql>=0.1.11",
 ]
 
 [project.optional-dependencies]
@@ -43,9 +44,9 @@ server = [
 console_scripts = { biolab = "biolab.cli:app" }
 
 [project.urls]
-Homepage = "https://github.com/srikarjy/biolab-mcp"
-Repository = "https://github.com/srikarjy/biolab-mcp"
-Issues = "https://github.com/srikarjy/biolab-mcp/issues"
+Homepage = "https://github.com/srikarjy/biolab-mcp-server"
+Repository = "https://github.com/srikarjy/biolab-mcp-server"
+Issues = "https://github.com/srikarjy/biolab-mcp-server/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

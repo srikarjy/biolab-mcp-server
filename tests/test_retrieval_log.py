@@ -6,6 +6,7 @@ faking it.
 """
 
 import json
+import threading
 
 from biolab import db, retrieval_log
 
@@ -89,3 +90,121 @@ def test_get_retrieval_returns_none_for_missing(tmp_path):
     conn = db.connect(str(tmp_path / "test.db"))
     result = retrieval_log.get_retrieval(conn, "non-existent-id")
     assert result is None
+
+
+def test_verify_chain_passes_for_untampered_rows(tmp_path):
+    conn = db.connect(str(tmp_path / "test.db"))
+    for i in range(5):
+        retrieval_log.write_retrieval(
+            conn, f"q{i}", str(i), "a", "pubmed", {}, f"<x id='{i}'/>", {}
+        )
+
+    ok, break_at = retrieval_log.verify_chain(conn)
+    assert ok is True
+    assert break_at is None
+
+
+def test_verify_chain_links_each_row_to_the_previous_hash(tmp_path):
+    conn = db.connect(str(tmp_path / "test.db"))
+    first = retrieval_log.write_retrieval(conn, "q0", "0", "a", "pubmed", {}, "<x/>", {})
+    second = retrieval_log.write_retrieval(conn, "q1", "1", "a", "pubmed", {}, "<y/>", {})
+
+    assert first.prev_hash == ""
+    assert second.prev_hash == first.response_hash
+    assert second.response_hash != first.response_hash
+
+
+def test_verify_chain_detects_a_tampered_row(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    conn = db.connect(db_path)
+    for i in range(4):
+        retrieval_log.write_retrieval(
+            conn, f"q{i}", str(i), "a", "pubmed", {}, f"<x id='{i}'/>", {}
+        )
+
+    rows = conn.execute(
+        "SELECT retrieval_id FROM retrievals ORDER BY rowid ASC"
+    ).fetchall()
+    tampered_id = rows[2][0]
+
+    conn.execute(
+        "UPDATE retrievals SET raw_response = ? WHERE retrieval_id = ?",
+        ("<tampered/>", tampered_id),
+    )
+    conn.commit()
+
+    ok, break_at = retrieval_log.verify_chain(conn)
+    assert ok is False
+    assert break_at == tampered_id
+
+
+def test_concurrent_writes_through_the_background_writer_land_intact(tmp_path):
+    """AD-9: a single background writer serializes concurrent callers.
+
+    Fire writes from many threads at once and confirm every row lands with a
+    unique retrieval_id and an unbroken hash chain — no interleaved/corrupted
+    commits, no lost writes.
+    """
+    db_path = str(tmp_path / "test.db")
+    conn = db.connect(db_path)
+    retrieval_log.start_writer(db_path)
+    try:
+        n_threads = 20
+        results: list[object] = [None] * n_threads
+        errors: list[Exception] = []
+
+        def do_write(i: int) -> None:
+            try:
+                results[i] = retrieval_log.write_retrieval(
+                    conn, f"q{i}", str(i), "a", "pubmed", {}, f"<x id='{i}'/>", {}
+                )
+            except Exception as e:  # noqa: BLE001 - surfaced via `errors` below
+                errors.append(e)
+
+        threads = [threading.Thread(target=do_write, args=(i,)) for i in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        assert all(r is not None for r in results)
+
+        count = conn.execute("SELECT count(*) FROM retrievals").fetchone()[0]
+        assert count == n_threads
+
+        retrieval_ids = {r.retrieval_id for r in results}
+        assert len(retrieval_ids) == n_threads  # no collisions/lost writes
+
+        ok, break_at = retrieval_log.verify_chain(conn)
+        assert ok is True, f"chain broke at {break_at}"
+    finally:
+        retrieval_log.stop_writer()
+
+
+def test_forced_db_error_mid_write_raises_loudly(tmp_path):
+    """AD-8: a DB failure during write must propagate, never fail silently."""
+    db_path = str(tmp_path / "test.db")
+    conn = db.connect(db_path)
+
+    class _FailsOnCommit:
+        def __init__(self, real_conn):
+            self._conn = real_conn
+
+        def commit(self):
+            raise RuntimeError("simulated DB failure")
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    failing_conn = _FailsOnCommit(conn)
+
+    raised = False
+    try:
+        retrieval_log.write_retrieval(failing_conn, "q", "1", "a", "pubmed", {}, "<x/>", {})
+    except RuntimeError:
+        raised = True
+
+    assert raised is True
+    count = conn.execute("SELECT count(*) FROM retrievals").fetchone()[0]
+    assert count == 0

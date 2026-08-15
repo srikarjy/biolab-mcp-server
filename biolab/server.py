@@ -18,7 +18,11 @@ MAX_RESULTS_CAP = 50  # hard ceiling — an uncapped max_results lets a caller f
                         # unbounded memory use and DB writes per call; 50 matches
                         # PubMed's own esearch API default retmax
 
-mcp = FastMCP("biolab")
+mcp = FastMCP(
+    "biolab",
+    host=os.environ.get("BIOLAB_HOST", "0.0.0.0"),
+    port=int(os.environ.get("BIOLAB_PORT", "8000")),
+)
 _conn = db.connect(DB_PATH)
 
 # Start background writer for thread-safe DB writes
@@ -236,6 +240,6 @@ def get_retrieval(retrieval_id: str) -> dict:
 
 if __name__ == "__main__":
     try:
-        mcp.run()
+        mcp.run(transport="streamable-http")
     finally:
         retrieval_log.stop_writer()

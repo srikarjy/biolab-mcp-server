@@ -15,3 +15,4 @@ class RetrievalRecord:
     raw_response: str
     snapshot: str  # JSON string
     response_hash: str
+    prev_hash: str  # response_hash of the previous row in the chain; "" for the first row
