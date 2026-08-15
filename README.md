@@ -37,6 +37,14 @@ That's it — `search_pubmed`, `search_europepmc`, `search_clinicaltrials`, `sea
 
 Also listed on the [official MCP Registry](https://registry.modelcontextprotocol.io) and [Smithery](https://smithery.ai/servers/srikarjy025/biolab-mcp) if you'd rather discover/install it from there.
 
+**A note on rate limits.** The hosted server is shared and stays open — no signup required for casual use — but callers with no API key share one small, low-throughput budget (1 req/s to PubMed) so no single anonymous user can starve everyone else. If you're doing more than a handful of queries, ask for a key (below) and you get your own isolated, higher budget instead.
+
+**Getting a key:**
+```
+Authorization: Bearer <your key>
+```
+Add that header in your client's MCP config (Claude Code: `claude mcp add --transport http biolab <url> --header "Authorization: Bearer <key>"`). Keys are issued with `biolab keys create <label>` — see [Managing API Keys](#managing-api-keys) below if you're running your own instance; otherwise ask the maintainer for one.
+
 Want to run your own copy instead (local dev, your own storage, self-hosting)? Keep reading.
 
 ## The Problem
@@ -206,6 +214,23 @@ for p in papers:
     record = write_retrieval(conn, query="...", pmid=p.pmid, ...)
     print(record.retrieval_id)
 ```
+
+## Managing API Keys
+
+The server stays open to unauthenticated callers by design — but they all share one small, low-throughput rate-limit budget (see [Use It Now](#use-it-now--no-install)). Issuing someone a key gives them their own isolated, higher budget instead. This doesn't gate *access* — it's purely a fairness mechanism so one caller can't starve everyone else's share of PubMed's real rate limit.
+
+```bash
+# Issue a key — the raw key is shown once, save it immediately
+biolab keys create alice
+
+# List issued keys (never shows the raw key — only a hash is stored)
+biolab keys list
+
+# Revoke all of a label's active keys
+biolab keys revoke alice
+```
+
+The caller sends the key back as `Authorization: Bearer <key>`. A missing header still works (anonymous tier); a header with an invalid or revoked key is rejected with `401`, not silently downgraded — a typo'd key should fail loudly, not quietly run at a lower tier.
 
 ## Environment Variables
 

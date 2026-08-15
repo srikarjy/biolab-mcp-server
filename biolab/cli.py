@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
 
-from biolab import db, retrieval_log
+from biolab import auth, db, retrieval_log
 
 app = typer.Typer(
     name="biolab",
@@ -17,6 +17,59 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+keys_app = typer.Typer(help="Manage API keys for the hosted server's per-caller rate-limit tiers.")
+app.add_typer(keys_app, name="keys")
+
+
+@keys_app.command("create")
+def keys_create(
+    label: str = typer.Argument(..., help="Human-readable owner, e.g. a name or team"),
+    agent_id: str = typer.Option(None, "--agent-id", help="Identity to attribute traffic to (default: label)"),
+    db_path: str = typer.Option("biolab.db", "--db", help="Path to SQLite database"),
+):
+    """Create a new API key. The raw key is shown once — it isn't stored anywhere retrievable."""
+    conn = db.connect(db_path)
+    raw_key = auth.create_api_key(conn, label, agent_id or label)
+    console.print(f"[green]Created key for[/green] [bold]{label}[/bold]")
+    console.print(f"[bold]{raw_key}[/bold]")
+    console.print("[yellow]This is shown once — save it now.[/yellow]")
+
+
+@keys_app.command("list")
+def keys_list(
+    db_path: str = typer.Option("biolab.db", "--db", help="Path to SQLite database"),
+):
+    """List all issued API keys (never shows the raw key)."""
+    conn = db.connect(db_path)
+    rows = auth.list_api_keys(conn)
+    if not rows:
+        console.print("[yellow]No keys issued[/yellow]")
+        return
+
+    table = Table(title="API Keys")
+    table.add_column("Label")
+    table.add_column("Agent ID")
+    table.add_column("Created At")
+    table.add_column("Status")
+    for row in rows:
+        status = "[red]revoked[/red]" if row["revoked"] else "[green]active[/green]"
+        table.add_row(row["label"], row["agent_id"], row["created_at"][:19].replace("T", " "), status)
+    console.print(table)
+
+
+@keys_app.command("revoke")
+def keys_revoke(
+    label: str = typer.Argument(..., help="Label of the key(s) to revoke"),
+    db_path: str = typer.Option("biolab.db", "--db", help="Path to SQLite database"),
+):
+    """Revoke all active keys for a label."""
+    conn = db.connect(db_path)
+    count = auth.revoke_api_key(conn, label)
+    if count:
+        console.print(f"[green]Revoked {count} key(s) for[/green] [bold]{label}[/bold]")
+    else:
+        console.print(f"[yellow]No active keys found for[/yellow] [bold]{label}[/bold]")
 
 
 def _get_conn(db_path: str):
