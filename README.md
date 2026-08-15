@@ -32,6 +32,7 @@ claude mcp add --transport http biolab https://srikarjy025-biolab-mcp.hf.space/m
   }
 }
 ```
+(Add `"headers": {"Authorization": "Bearer <your key>"}` alongside `"url"` once you have a key — see the rate-limit note below.)
 
 That's it — `search_pubmed`, `search_europepmc`, `search_clinicaltrials`, `search_biorxiv`, and `get_retrieval` are now available as tools your assistant can call. Every retrieval is written to a hash-chained audit trail you can inspect later (see [Audit Trail Schema](#audit-trail-schema-v2) below).
 
@@ -321,6 +322,8 @@ go build -o biolab-server ./cmd/server
 | **Containers** | `docker pull ghcr.io/srikarjy/biolab-mcp:latest`, or build `space/Dockerfile` yourself |
 | **Linux packages** | `.deb`, `.rpm`, `.apk` via goreleaser |
 | **Discovery** | [MCP Registry](https://registry.modelcontextprotocol.io) · [Smithery](https://smithery.ai/servers/srikarjy025/biolab-mcp) |
+
+**Running cost: $0/month.** The Space runs on Hugging Face's free `cpu-basic` tier (this workload waits on network calls, not compute, so it never needed more). Turso's free tier is currently at 0% of its storage/read/write quotas, and has overages *disabled* — if usage ever did hit a limit, requests get rejected, not silently billed. There's no realistic query volume (short of literally millions/month) that would introduce a cost.
 
 ## Roadmap
 
