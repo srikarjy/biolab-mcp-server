@@ -30,6 +30,14 @@ CREATE INDEX IF NOT EXISTS idx_retrievals_external_id ON retrievals(external_id)
 CREATE INDEX IF NOT EXISTS idx_retrievals_agent_id ON retrievals(agent_id);
 CREATE INDEX IF NOT EXISTS idx_retrievals_retrieved_at ON retrievals(retrieved_at);
 CREATE INDEX IF NOT EXISTS idx_retrievals_source ON retrievals(source);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    key_hash    TEXT PRIMARY KEY,  -- SHA-256 of the raw key; the raw key is never stored
+    label       TEXT NOT NULL,     -- human-readable owner, e.g. "alice"
+    agent_id    TEXT NOT NULL,     -- identity this key's traffic is attributed to
+    created_at  TEXT NOT NULL,
+    revoked     INTEGER NOT NULL DEFAULT 0
+);
 """
 
 # Tracks the target (Turso URL or local path) most recently connected to, so

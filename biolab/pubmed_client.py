@@ -12,6 +12,8 @@ from xml.etree import ElementTree as ET  # only for tostring() — safe, no untr
 
 import defusedxml.ElementTree as SafeET  # parses untrusted network XML; guards against entity-expansion ("billion laughs") attacks
 
+from biolab.auth import current_identity
+
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 TIMEOUT_SECONDS = 10
@@ -44,6 +46,27 @@ class _RateLimiter:
 
 _rate_limiter = _RateLimiter(REQUESTS_PER_SECOND)
 
+# Per-caller fairness layer, on top of the global limiter above. Only engages
+# when server.py's auth middleware has set an explicit identity (a real public
+# HTTP request); CLI/direct API/test usage leaves current_identity at its
+# default of None and behaves exactly as before — a single global budget.
+ANONYMOUS_REQUESTS_PER_SECOND = 1.0
+_identity_limiters: dict[str, _RateLimiter] = {}
+_identity_limiters_lock = threading.Lock()
+
+
+def _identity_limiter() -> "_RateLimiter | None":
+    identity = current_identity.get()
+    if identity is None:
+        return None
+    with _identity_limiters_lock:
+        limiter = _identity_limiters.get(identity)
+        if limiter is None:
+            rate = ANONYMOUS_REQUESTS_PER_SECOND if identity == "anonymous" else REQUESTS_PER_SECOND
+            limiter = _RateLimiter(rate)
+            _identity_limiters[identity] = limiter
+        return limiter
+
 
 def _with_api_key(params: dict) -> dict:
     if NCBI_API_KEY:
@@ -54,9 +77,12 @@ def _with_api_key(params: dict) -> dict:
 def _urlopen_with_retry(url: str):
     """urlopen with backoff on HTTP 429 — NCBI's rate limit (3 req/s unauthenticated,
     10 req/s with an API key) is a known, transient constraint, not an application
-    error worth failing on. Client-side pacing (_rate_limiter) should keep this from
-    firing in normal operation; the retry is a safety net for the rest."""
+    error worth failing on. Client-side pacing (_rate_limiter, _identity_limiter)
+    should keep this from firing in normal operation; the retry is a safety net."""
     for attempt in range(RATE_LIMIT_RETRIES + 1):
+        id_limiter = _identity_limiter()
+        if id_limiter is not None:
+            id_limiter.wait()
         _rate_limiter.wait()
         try:
             return urlopen(url, timeout=TIMEOUT_SECONDS)

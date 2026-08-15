@@ -3,8 +3,10 @@
 import os
 
 from mcp.server.fastmcp import FastMCP
+from starlette.responses import JSONResponse
 
 from biolab import (
+    auth,
     biorxiv_client,
     clinicaltrials_client,
     db,
@@ -238,8 +240,55 @@ def get_retrieval(retrieval_id: str) -> dict:
     }
 
 
+class ApiKeyAuthMiddleware:
+    """Sets auth.current_identity for every HTTP request, based on an optional
+    `Authorization: Bearer <key>` header.
+
+    The server stays open to callers with no header at all (identity =
+    "anonymous", a low shared rate-limit budget — see pubmed_client.py). A
+    header that doesn't match a valid, non-revoked key is rejected outright
+    rather than silently downgraded, so a typo'd key fails loudly instead of
+    quietly running at the anonymous tier.
+
+    Plain ASGI (not Starlette's BaseHTTPMiddleware) because streamable-http
+    keeps connections open for server-sent events; BaseHTTPMiddleware's
+    response buffering doesn't play well with that.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers") or [])
+        auth_header = headers.get(b"authorization", b"").decode("latin-1")
+        identity = "anonymous"
+        if auth_header.startswith("Bearer "):
+            raw_key = auth_header[len("Bearer ") :].strip()
+            resolved = auth.verify_api_key(_conn, raw_key)
+            if resolved is None:
+                response = JSONResponse({"error": "invalid or revoked API key"}, status_code=401)
+                await response(scope, receive, send)
+                return
+            identity = resolved
+
+        token = auth.current_identity.set(identity)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            auth.current_identity.reset(token)
+
+
 if __name__ == "__main__":
+    import uvicorn
+
+    app = mcp.streamable_http_app()
+    app.add_middleware(ApiKeyAuthMiddleware)
+
     try:
-        mcp.run(transport="streamable-http")
+        uvicorn.run(app, host=mcp.settings.host, port=mcp.settings.port)
     finally:
         retrieval_log.stop_writer()
