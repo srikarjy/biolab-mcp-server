@@ -58,6 +58,9 @@ testpaths = ["tests"]
 filterwarnings = [
     "ignore::pytest.PytestUnhandledThreadExceptionWarning",
 ]
+markers = [
+    "benchmark: performance benchmark (needs pytest-benchmark; excluded from CI, run manually with -m benchmark)",
+]
 
 [tool.ruff]
 target-version = "py311"
