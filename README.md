@@ -311,4 +311,4 @@ MIT — see [LICENSE](LICENSE)
 
 ## Author
 
-**Srikar Jy** — [srikarjy@gmail.com](mailto:srikarjy@gmail.com)
+**Srikar Jy** — [srikarjy025@gmail.com](mailto:srikarjy025@gmail.com)

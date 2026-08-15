@@ -64,13 +64,12 @@ async def _running_server(db_path: str):
 
 
 async def _call_tool(db_path: str, tool_name: str, arguments: dict):
-    async with _running_server(db_path) as url:
-        async with (
-            streamablehttp_client(url) as (read, write, _),
-            ClientSession(read, write) as session,
-        ):
-            await session.initialize()
-            return await session.call_tool(tool_name, arguments)
+    async with (
+        _running_server(db_path) as url, streamablehttp_client(url) as (read, write, _),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        return await session.call_tool(tool_name, arguments)
 
 
 async def _call_search_pubmed(db_path: str, arguments: dict):

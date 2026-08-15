@@ -1,49 +1,41 @@
 """Benchmark tests for Biolab MCP Server - validates performance claims."""
 
 import json
-import os
 import sqlite3
-import statistics
-import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
 from biolab.db import connect
 from biolab.models import RetrievalRecord
-from biolab.pubmed_client import fetch, search
-from biolab.retrieval_log import write_retrieval, start_writer, stop_writer
+from biolab.pubmed_client import fetch, search, search_and_fetch
+from biolab.retrieval_log import start_writer, stop_writer, write_retrieval
 
 
 # Fixtures
 @pytest.fixture
 def temp_db():
     """Create a temporary database for testing."""
-    db_path = "/tmp/biolab_bench_test.db"
-    if os.path.exists(db_path):
-        os.remove(db_path)
-    conn = connect(db_path)
+    db_path = Path("/tmp/biolab_bench_test.db")
+    db_path.unlink(missing_ok=True)
+    conn = connect(str(db_path))
     yield conn
     conn.close()
-    if os.path.exists(db_path):
-        os.remove(db_path)
+    db_path.unlink(missing_ok=True)
 
 
 @pytest.fixture
 def temp_db_with_writer():
     """Create a temporary database with background writer running."""
-    db_path = "/tmp/biolab_bench_test_writer.db"
-    if os.path.exists(db_path):
-        os.remove(db_path)
-    conn = connect(db_path)
-    start_writer(db_path)
+    db_path = Path("/tmp/biolab_bench_test_writer.db")
+    db_path.unlink(missing_ok=True)
+    conn = connect(str(db_path))
+    start_writer(str(db_path))
     yield conn
     stop_writer()
     conn.close()
-    if os.path.exists(db_path):
-        os.remove(db_path)
+    db_path.unlink(missing_ok=True)
 
 
 # Helper functions
@@ -172,6 +164,7 @@ class TestCommitFailureFaultInjection:
         the fault injection works correctly.
         """
         import random
+
         from biolab.retrieval_log import stop_writer
 
         # Ensure no background writer is running
@@ -207,10 +200,9 @@ class TestCommitFailureFaultInjection:
                 return getattr(self._conn, name)
 
         # Create a fresh database for this test
-        db_path = "/tmp/biolab_fault_test.db"
-        if os.path.exists(db_path):
-            os.remove(db_path)
-        conn = connect(db_path)
+        db_path = Path("/tmp/biolab_fault_test.db")
+        db_path.unlink(missing_ok=True)
+        conn = connect(str(db_path))
 
         # Wrap the connection - DO NOT start writer thread so it uses sync path
         faulty_conn = FaultyConnection(conn)
@@ -246,8 +238,7 @@ class TestCommitFailureFaultInjection:
             assert len(row[0]) == 36  # UUID format
 
         conn.close()
-        if os.path.exists(db_path):
-            os.remove(db_path)
+        db_path.unlink(missing_ok=True)
 
 
 class TestThroughputBenchmarks:
@@ -272,7 +263,7 @@ class TestThroughputBenchmarks:
                     snapshot=json.loads(snapshot),
                 )
 
-        result = benchmark.pedantic(run_batch, rounds=10, iterations=1)
+        benchmark.pedantic(run_batch, rounds=10, iterations=1)
         # 10 records per batch * 10 rounds = 100 records
         # Should achieve ~7.99 records/sec based on claims
 
@@ -295,7 +286,7 @@ class TestThroughputBenchmarks:
                     snapshot=json.loads(snapshot),
                 )
 
-        result = benchmark.pedantic(run_batch, rounds=10, iterations=1)
+        benchmark.pedantic(run_batch, rounds=10, iterations=1)
 
 
 # Latency measurement utilities for manual verification
@@ -330,10 +321,9 @@ def measure_fetch_latency():
 
 def measure_sqlite_commit_latency():
     """Measure and report SQLite commit latency percentiles."""
-    db_path = "/tmp/biolab_latency_test.db"
-    if os.path.exists(db_path):
-        os.remove(db_path)
-    conn = connect(db_path)
+    db_path = Path("/tmp/biolab_latency_test.db")
+    db_path.unlink(missing_ok=True)
+    conn = connect(str(db_path))
 
     latencies = []
     for i in range(100):
@@ -359,7 +349,7 @@ def measure_sqlite_commit_latency():
     print(f"SQLite commit latency: p50={p50:.2f}ms, p95={p95:.2f}ms")
 
     conn.close()
-    os.remove(db_path)
+    db_path.unlink()
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ description = "MCP server for auditable biological database queries — every re
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Srikar Jy", email = "srikarjy@gmail.com"}
+    {name = "Srikar Jy", email = "srikarjy025@gmail.com"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -57,6 +57,9 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 filterwarnings = [
     "ignore::pytest.PytestUnhandledThreadExceptionWarning",
+]
+markers = [
+    "benchmark: performance benchmark (needs pytest-benchmark; excluded from CI, run manually with -m benchmark)",
 ]
 
 [tool.ruff]
