@@ -1,6 +1,7 @@
 """MCP server entrypoint. Registers the search_pubmed and get_retrieval tools."""
 
 import os
+import sys
 
 from mcp.server.fastmcp import FastMCP
 from starlette.responses import JSONResponse
@@ -283,12 +284,22 @@ class ApiKeyAuthMiddleware:
 
 
 if __name__ == "__main__":
-    import uvicorn
+    # stdio mode serves local same-machine clients that spawn this server as
+    # a subprocess (e.g. Aletheia's mcp_client) -- no HTTP port, no API-key
+    # middleware; the caller is anonymous (auth.current_identity stays None),
+    # which is the same trust domain as the process that spawned it.
+    if "--stdio" in sys.argv or os.environ.get("BIOLAB_TRANSPORT", "").lower() == "stdio":
+        try:
+            mcp.run(transport="stdio")
+        finally:
+            retrieval_log.stop_writer()
+    else:
+        import uvicorn
 
-    app = mcp.streamable_http_app()
-    app.add_middleware(ApiKeyAuthMiddleware)
+        app = mcp.streamable_http_app()
+        app.add_middleware(ApiKeyAuthMiddleware)
 
-    try:
-        uvicorn.run(app, host=mcp.settings.host, port=mcp.settings.port)
-    finally:
-        retrieval_log.stop_writer()
+        try:
+            uvicorn.run(app, host=mcp.settings.host, port=mcp.settings.port)
+        finally:
+            retrieval_log.stop_writer()
