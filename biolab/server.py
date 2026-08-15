@@ -13,6 +13,7 @@ from biolab import (
     db,
     europepmc_client,
     pubmed_client,
+    retraction_client,
     retrieval_log,
 )
 
@@ -210,6 +211,43 @@ def search_biorxiv(category: str, agent_id: str, max_results: int = 5, server: s
         })
 
     return {"category_echo": category, "preprints": results}
+
+
+@mcp.tool()
+def check_retractions(pmids: list[str], agent_id: str) -> dict:
+    """Check whether PubMed papers have been retracted or carry an Expression
+    of Concern, from PubMed's own record metadata (PublicationType +
+    CommentsCorrections markers).
+
+    A PMID missing from the result was not returned by PubMed (bad id or
+    suppressed record) — callers must not treat absence as "not retracted".
+    Status is derived live from PubMed rather than logged as a retrieval; the
+    caller is expected to persist what it acted on.
+
+    Args:
+        pmids: PubMed IDs to check (max 50 per call)
+        agent_id: which agent is asking, e.g. "aletheia:single_call"
+    """
+    if not pmids:
+        raise ValueError("pmids must not be empty")
+    if not agent_id.strip():
+        raise ValueError("agent_id must not be empty")
+    if len(pmids) > MAX_RESULTS_CAP:
+        raise ValueError(f"at most {MAX_RESULTS_CAP} pmids per call")
+
+    statuses = retraction_client.check(pmids)
+    return {
+        "statuses": [
+            {
+                "pmid": s.pmid,
+                "retracted": s.retracted,
+                "concern": s.concern,
+                "notice": s.notice,
+                "notice_pmid": s.notice_pmid,
+            }
+            for s in statuses
+        ]
+    }
 
 
 @mcp.tool()
