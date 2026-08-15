@@ -9,7 +9,7 @@ description = "MCP server for auditable biological database queries — every re
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Srikar Jy", email = "srikarjy@gmail.com"}
+    {name = "Srikar Jy", email = "srikarjy025@gmail.com"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
